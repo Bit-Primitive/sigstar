@@ -1,0 +1,168 @@
+version: 2
+
+models:
+  - name: fct_prices
+    description: "Closed OHLCV candles. Grain: asset, venue, interval, ts (candle open, UTC)."
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [asset, venue, '"interval"', ts]
+      - expression_true:
+          arguments:
+            expression: "high >= low"
+    columns:
+      - name: asset
+        data_tests: [not_null]
+      - name: venue
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [coinbase, kraken, binance]
+      - name: interval
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["1d", "1h"]
+      - name: ts
+        data_tests: [not_null]
+      - name: close
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: volume
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: fct_derivatives
+    description: "Funding and open interest per asset, venue and UTC day."
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [asset, venue, day]
+    columns:
+      - name: day
+        data_tests: [not_null]
+      - name: funding_rate_sum
+        description: "Sum of the day's funding settlements, as a fraction (0.0003 = 0.03%)."
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: -0.1
+                max_value: 0.1
+      - name: oi_usd_close
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: fct_news
+    description: "One headline per URL: title, link, source, time, optional feed snippet. Never article text."
+    columns:
+      - name: article_id
+        data_tests: [unique, not_null]
+      - name: url
+        data_tests: [unique, not_null]
+      - name: title
+        data_tests: [not_null]
+      - name: published_at
+        data_tests: [not_null]
+      - name: snippet
+        data_tests:
+          - expression_true:
+              arguments:
+                expression: "snippet is null or length(snippet) <= 280"
+
+  - name: bridge_news_tags
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [article_id, tag]
+
+  - name: agg_news_daily
+    description: "News coverage per tag (asset or topic) and UTC day."
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [tag, day]
+    columns:
+      - name: gdelt_tone
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: -100
+                max_value: 100
+      - name: gdelt_volume_share
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: fct_sentiment
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [indicator, day]
+    columns:
+      - name: value
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+
+  - name: fct_macro
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [series_id, day]
+    columns:
+      - name: value
+        data_tests: [not_null]
+
+  - name: fct_onchain_daily
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [day, chain, metric, token_address]
+    columns:
+      - name: value
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: features_daily
+    description: "One row per asset and UTC day: returns, volatility, volume, spread, funding, OI, news, sentiment, macro and on-chain features with trailing z-scores."
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [asset, day]
+    columns:
+      - name: asset
+        data_tests: [not_null]
+      - name: day
+        data_tests: [not_null]
+      - name: close
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: fear_greed
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+      - name: rv_30d
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0

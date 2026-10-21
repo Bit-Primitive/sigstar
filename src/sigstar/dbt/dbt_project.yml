@@ -1,0 +1,33 @@
+name: sigstar
+version: "0.1.0"
+config-version: 2
+profile: sigstar
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+# sigstar passes these with --vars from sigstar.yml; the defaults keep `dbt parse` working.
+vars:
+  assets: []
+  topics: []
+  news_rules: []
+  stablecoins: []
+  fred_series: []
+  chainstar_enabled: false
+  zscore_window: 30
+  zscore_min_obs: 10
+  # Reference price per asset: the first venue in this list with a close that day.
+  venue_priority: ["coinbase", "kraken", "binance"]
+  # Cross-venue spread compares venues quoted in the same currency, so a USDT premium
+  # never shows up as a price gap.
+  spread_quote: USD
+
+models:
+  sigstar:
+    staging:
+      +schema: sigstar_staging
+      +materialized: view
+    marts:
+      +schema: sigstar
+      +materialized: table

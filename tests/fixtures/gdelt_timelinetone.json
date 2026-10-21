@@ -1,0 +1,29 @@
+{
+ "query_details": {
+  "title": "bitcoin sourcelang:english",
+  "date_resolution": "day"
+ },
+ "timeline": [
+  {
+   "series": "Average Tone",
+   "data": [
+    {
+     "date": "20261018T000000Z",
+     "value": -0.8574
+    },
+    {
+     "date": "20261019T000000Z",
+     "value": -0.511
+    },
+    {
+     "date": "20261020T000000Z",
+     "value": -0.4403
+    },
+    {
+     "date": "20261021T000000Z",
+     "value": 0.6693
+    }
+   ]
+  }
+ ]
+}

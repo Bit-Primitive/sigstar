@@ -1,0 +1,33 @@
+{
+ "query_details": {
+  "title": "bitcoin sourcelang:english",
+  "date_resolution": "day"
+ },
+ "timeline": [
+  {
+   "series": "Article Count",
+   "data": [
+    {
+     "date": "20261018T000000Z",
+     "value": 37,
+     "norm": 76163
+    },
+    {
+     "date": "20261019T000000Z",
+     "value": 90,
+     "norm": 146057
+    },
+    {
+     "date": "20261020T000000Z",
+     "value": 122,
+     "norm": 156425
+    },
+    {
+     "date": "20261021T000000Z",
+     "value": 80,
+     "norm": 105460
+    }
+   ]
+  }
+ ]
+}

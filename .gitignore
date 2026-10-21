@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# sigstar run output (warehouse, dlt state, dbt artefacts, HTTP cache, reports, alert logs)
+.sigstar/
+*.duckdb
+*.duckdb.wal
+sigstar.yml
+sigstar-rules.yml
+reports/
+alerts.jsonl
+alerts.csv

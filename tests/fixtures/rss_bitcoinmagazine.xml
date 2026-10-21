@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"
+	xmlns:content="http://purl.org/rss/1.0/modules/content/"
+	xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+	xmlns:dc="http://purl.org/dc/elements/1.1/"
+	xmlns:atom="http://www.w3.org/2005/Atom"
+	xmlns:sy="http://purl.org/rss/1.0/modules/syndication/"
+	xmlns:slash="http://purl.org/rss/1.0/modules/slash/"
+	xmlns:media="http://search.yahoo.com/mrss/" >
+
+<channel>
+	<title>Bitcoin Magazine</title>
+	<atom:link href="https://bitcoinmagazine.com/feed" rel="self" type="application/rss+xml" />
+	<link>https://bitcoinmagazine.com</link>
+	<description>Bitcoin News, Articles and Expert Insights</description>
+	<lastBuildDate>Wed, 21 Oct 2026 17:28:53 +0000</lastBuildDate>
+	<language>en-US</language>
+	<sy:updatePeriod>
+	hourly	</sy:updatePeriod>
+	<sy:updateFrequency>
+	1	</sy:updateFrequency>
+	<generator>https://wordpress.org/?v=7.1.3</generator>
+
+<image>
+	<url>https://bitcoinmagazine.com/wp-content/uploads/2024/09/cropped-Bitcoin-Magazine-glyph-black-01-32x32.png</url>
+	<title>Bitcoin Magazine</title>
+	<link>https://bitcoinmagazine.com</link>
+	<width>32</width>
+	<height>32</height>
+</image> 
+	<item>
+		<title>Standard Chartered Signs Agreement To Acquire Crypto Custodian Zodia Custody</title>
+		<link>https://bitcoinmagazine.com/news/standard-chartered-to-buy-zodia-custodian</link>
+		
+		<dc:creator><![CDATA[Mathew Di Salvo]]></dc:creator>
+		<pubDate>Wed, 21 Oct 2026 17:28:34 +0000</pubDate>
+				<category><![CDATA[NEWS]]></category>
+		<category><![CDATA[Bitcoin]]></category>
+		<category><![CDATA[Custody]]></category>
+		<category><![CDATA[Standard Chartered]]></category>
+		<category><![CDATA[zodia]]></category>
+		<guid isPermaLink="false">https://bitcoinmagazine.com/?p=56100</guid>
+
+					<description><![CDATA[<p><a rel="nofollow" href="https://bitcoinmagazine.com">Bitcoin Magazine</a><br />
+<img src="https://bitcoinmagazine.com/wp-content/uploads/2026/10/Gemini_Generated_Image_nt4nqknt4nqknt4n.jpg" style="display: block; margin: 1em auto"><br />
+<a rel="nofollow" href="https://bitcoinmagazine.com/news/standard-chartered-to-buy-zodia-custodian">Standard Chartered Signs Agreement To Acquire Crypto Custodian Zodia Custody</a></p>
+<p>British bank Standard Chartered will integrate Zodia Custody’s bitcoin and crypto services into its own. </p>
+<p>This post <a rel="nofollow" href="https://bitcoinmagazine.com/news/standard-chartered-to-buy-zodia-custodian">Standard Chartered Signs Agreement To Acquire Crypto Custodian Zodia Custody</a> first appeared on <a rel="nofollow" href="https://bitcoinmagazine.com">Bitcoin Magazine</a> and is written by <a rel="nofollow" href="https://bitcoinmagazine.com/authors/mathewdisalvo">Mathew Di Salvo</a>.</p>
+]]></description>
+										<content:encoded><![CDATA[<p>FULL ARTICLE TEXT REMOVED FROM FIXTURE</p>]]></content:encoded>
+					
+		
+		
+			</item>
+<item>
+		<title>Beyond HODLing: How Bitcoin-Backed Loans Can Unlock New Financial Opportunities</title>
+		<link>https://bitcoinmagazine.com/markets/beyond-hodling-how-bitcoin-backed-loans-can-unlock-new-financial-opportunities</link>
+		
+		<dc:creator><![CDATA[Josh Plischke]]></dc:creator>
+		<pubDate>Wed, 21 Oct 2026 16:24:07 +0000</pubDate>
+				<category><![CDATA[MARKETS]]></category>
+		<category><![CDATA[NEWS]]></category>
+		<category><![CDATA[Adoption]]></category>
+		<category><![CDATA[Bitcoin]]></category>
+		<category><![CDATA[Bitcoin Loans]]></category>
+		<category><![CDATA[liquidity]]></category>
+		<category><![CDATA[SALT Lending]]></category>
+		<guid isPermaLink="false">https://bitcoinmagazine.com/?p=56088</guid>
+
+					<description><![CDATA[<p><a rel="nofollow" href="https://bitcoinmagazine.com">Bitcoin Magazine</a><br />
+<img src="https://bitcoinmagazine.com/wp-content/uploads/2026/10/Liquidity-Without-Selling-Bitcoin.png" style="display: block; margin: 1em auto"><br />
+<a rel="nofollow" href="https://bitcoinmagazine.com/markets/beyond-hodling-how-bitcoin-backed-loans-can-unlock-new-financial-opportunities">Beyond HODLing: How Bitcoin-Backed Loans Can Unlock New Financial Opportunities</a></p>
+<p>SALT Lending highlights how Bitcoin holders can access liquidity for real estate, business expansion, and other financial opportunities without selling their Bitcoin.</p>
+<p>This post <a rel="nofollow" href="https://bitcoinmagazine.com/markets/beyond-hodling-how-bitcoin-backed-loans-can-unlock-new-financial-opportunities">Beyond HODLing: How Bitcoin-Backed Loans Can Unlock New Financial Opportunities</a> first appeared on <a rel="nofollow" href="https://bitcoinmagazine.com">Bitcoin Magazine</a> and is written by <a rel="nofollow" href="https://bitcoinmagazine.com/authors/josh-plischke">Josh Plischke</a>.</p>
+]]></description>
+										<content:encoded><![CDATA[<p>FULL ARTICLE TEXT REMOVED FROM FIXTURE</p>]]></content:encoded>
+					
+		
+		
+			</item>
+</channel>
+</rss>

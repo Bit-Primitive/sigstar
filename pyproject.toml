@@ -1,0 +1,106 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sigstar"
+version = "0.1.0.dev0"
+description = "Collect market, on-chain, news and macro data, organise it, and explain, forecast and alert on crypto price moves from every angle."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Bit Primitive" }]
+requires-python = ">=3.11"
+keywords = [
+    "crypto",
+    "bitcoin",
+    "ethereum",
+    "solana",
+    "market data",
+    "ohlcv",
+    "funding rates",
+    "open interest",
+    "fear and greed",
+    "news analytics",
+    "gdelt",
+    "macro",
+    "fred",
+    "on-chain",
+    "chainstar",
+    "explainability",
+    "anomaly detection",
+    "forecasting",
+    "backtesting",
+    "alerts",
+    "dlt",
+    "dbt",
+    "duckdb",
+    "data engineering",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: SQL",
+    "Topic :: Database",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+# Why each one: dlt collects (incremental state, merge loads); dbt-core + dbt-duckdb organise;
+# duckdb stores and is queried by the analysis; pandas + statsmodels do the statistics
+# (ETS/ARIMA forecasts, Granger tests, Markov-switching regimes; scipy comes with them);
+# typer is the CLI; pyyaml reads the config and rules; requests is the HTTP client (dlt
+# already depends on it).
+dependencies = [
+    "dlt[duckdb]>=1.10,<2",
+    "dbt-core>=1.10,<2",
+    "dbt-duckdb>=1.9,<2",
+    "duckdb>=1.2",
+    "pandas>=2.2",
+    "statsmodels>=0.14.4",
+    "typer>=0.12",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+]
+
+[project.urls]
+Homepage = "https://bitprimitive.com/projects/sigstar"
+Documentation = "https://github.com/Bit-Primitive/sigstar#readme"
+Source = "https://github.com/Bit-Primitive/sigstar"
+Issues = "https://github.com/Bit-Primitive/sigstar/issues"
+Changelog = "https://github.com/Bit-Primitive/sigstar/blob/main/CHANGELOG.md"
+
+[project.scripts]
+sigstar = "sigstar.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sigstar"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/sigstar", "tests", "README.md", "SOURCES.md", "CHANGELOG.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# σ is used on purpose for "standard deviations" in output.
+allowed-confusables = ["σ"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: calls real public APIs (run with -m network)"]
+addopts = "-m 'not network'"
