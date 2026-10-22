@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from sigstar.alerts import Alert
-from sigstar.analysis.anomalies import Anomaly
+from sigstar.analysis.anomalies import Anomaly, NotCompared
 from sigstar.analysis.explain import Explanation
 from sigstar.analysis.forecast import Forecast
 from sigstar.analysis.relationships import Relationships
@@ -39,6 +39,7 @@ def explanation(e: Explanation) -> str:
     lines = [
         f"{m.asset} on {m.day}: {m.return_pct * 100:+.2f}% "
         f"(close {money(m.close)} on {m.venue}, previous {money(m.prev_close or math.nan)})",
+        *([f"  price: {m.price_source}"] if m.price_source else []),
         f"  size: {z_text(m.z)} against the previous 30 days; "
         f"#{m.rank_in_window} largest of the last {m.window_days} days",
         "",
@@ -113,15 +114,20 @@ def alert(a: Alert) -> str:
     return "\n".join(lines)
 
 
-def anomalies(items: list[Anomaly]) -> str:
-    if not items:
-        return "no anomalies in this window"
-    lines = [f"{'day':<10} {'asset':<5} {'z':>7} {'robust':>7}  feature (value)"]
+def anomalies(items: list[Anomaly], skipped: list[NotCompared] | None = None) -> str:
+    lines = [] if items else ["no anomalies in this window"]
+    if items:
+        lines.append(f"{'day':<10} {'asset':<5} {'z':>7} {'robust':>7}  feature (value)")
     for a in items:
         lines.append(
             f"{a.day!s:<10} {a.asset:<5} {z_text(a.z):>7} {z_text(a.robust_z):>7}  "
             f"{a.label} ({a.value})"
         )
+    if skipped:
+        lines.append("")
+        lines.append("Not checked, because on-chain coverage was not comparable:")
+        for n in skipped:
+            lines.append(f"  {n.day} {', '.join(n.assets)}: {n.label}, {n.note}")
     return "\n".join(lines)
 
 

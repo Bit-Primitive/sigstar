@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+from sigstar import licences
 from sigstar.config import Config, fred_api_key
 from sigstar.http import PoliteClient
 from sigstar.sources import Row, Stream, binance, coinbase, feargreed, fred, gdelt, kraken, okx, rss
@@ -146,6 +147,10 @@ def plan_streams(cfg: Config, only: set[str] | None = None) -> tuple[list[Stream
     def wanted(source: str) -> bool:
         return cfg.source_enabled(source) and (only is None or source in only)
 
+    for source, terms in licences.TERMS.items():
+        if cfg.licence_blocked(source) and (only is None or source in only):
+            notices.append(f"{source}: off in commercial mode ({terms.note})")
+
     for source, (venue_key, fetch) in MARKET_VENUES.items():
         if not wanted(source):
             continue
@@ -197,13 +202,20 @@ def plan_streams(cfg: Config, only: set[str] | None = None) -> tuple[list[Stream
 
     if wanted("fred"):
         key = fred_api_key()
+        configured = cfg.sources.get("fred", {}).get("series") or []
+        left_out = [str(x) for x in configured if str(x) not in cfg.fred_series()]
+        if left_out:
+            notices.append(
+                f"fred: {', '.join(left_out)} left out in commercial mode (only the "
+                f"public-domain series {', '.join(licences.FRED_PUBLIC_DOMAIN)} are kept)"
+            )
         if key is None:
             notices.append(
                 "fred: skipped, SIGSTAR_FRED_API_KEY is not set (get a free key at "
                 "https://fred.stlouisfed.org/docs/api/api_key.html)"
             )
         else:
-            for series_id in cfg.sources.get("fred", {}).get("series") or []:
+            for series_id in cfg.fred_series():
                 # A month's lead so the first day in the window has a previous value.
                 streams.append(_fred_stream(series_id, key, days_ago(cfg.daily_days + 30)))
 

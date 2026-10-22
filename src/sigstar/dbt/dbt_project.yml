@@ -15,10 +15,23 @@ vars:
   stablecoins: []
   fred_series: []
   chainstar_enabled: false
+  # Whether the chainstar warehouse has fct_token_prices and fct_swaps (sigstar checks).
+  chainstar_prices: false
+  # From sources.licence_mode: what the staging models leave out (see macros/licence.sql).
+  licence:
+    mode: personal
+    excluded: {candles: [], derivatives: [], news: []}
+    fear_greed: true
+    fred_series: null
   zscore_window: 30
   zscore_min_obs: 10
-  # Reference price per asset: the first venue in this list with a close that day.
-  venue_priority: ["coinbase", "kraken", "binance"]
+  # On-chain z-scores compare a day only with earlier days on which every contributing chain
+  # was loaded with a block count within this share of the day's own (0.1 = 10%).
+  onchain_coverage_tolerance: 0.1
+  # Reference price per asset: the first venue in this list with a close that day. onchain
+  # (chainstar's price from DEX swaps) comes last: in personal mode it fills days no
+  # exchange has; in commercial mode it is the only venue.
+  venue_priority: ["coinbase", "kraken", "binance", "onchain"]
   # Cross-venue spread compares venues quoted in the same currency, so a USDT premium
   # never shows up as a price gap.
   spread_quote: USD
@@ -28,6 +41,9 @@ models:
     staging:
       +schema: sigstar_staging
       +materialized: view
+    intermediate:
+      +schema: sigstar_staging
+      +materialized: table
     marts:
       +schema: sigstar
       +materialized: table

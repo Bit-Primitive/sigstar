@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from sigstar import __version__, render
-from sigstar.alerts import Alert
-from sigstar.analysis.anomalies import Anomaly
+from sigstar import __version__, licences, render
+from sigstar.alerts import Alert, Skip
+from sigstar.analysis.anomalies import Anomaly, NotCompared
 from sigstar.analysis.explain import Explanation
 from sigstar.analysis.forecast import Forecast
 from sigstar.analysis.relationships import Relationships
@@ -34,6 +34,10 @@ ATTRIBUTIONS: dict[str, str] = {
     "okx": "Derivatives data: OKX public API.",
     "fear_greed": "Crypto Fear & Greed Index: alternative.me (https://alternative.me/crypto/).",
     "gdelt": "News coverage data: The GDELT Project (https://www.gdeltproject.org/).",
+    "chainstar": (
+        "On-chain data and USD prices: chainstar (https://bitprimitive.com/projects/chainstar), "
+        "derived on your computer from blockchain data and DEX swaps; no price service."
+    ),
     "fred": (
         "This product uses the FRED® API but is not endorsed or certified by the Federal "
         "Reserve Bank of St. Louis. Series DFF, DGS10: Board of Governors of the Federal "
@@ -43,6 +47,13 @@ ATTRIBUTIONS: dict[str, str] = {
 PERSONAL_USE = (
     "Exchange market data is licensed by the venues for your personal use: keep this report "
     "to yourself rather than publishing or redistributing it (see SOURCES.md)."
+)
+COMMERCIAL_USE = (
+    "Commercial mode: this report uses only sources whose published terms allow commercial "
+    "use, with the credits above, and on-chain data from your chainstar warehouse. The RPC "
+    "provider chainstar read the chain from has its own terms. Keep the credits next to the "
+    "data if you pass the report on; this is a reading of published terms, not legal advice "
+    "(see SOURCES.md)."
 )
 
 
@@ -77,6 +88,9 @@ class Brief:
     rss_attributions: list[str]
     notes: list[str]
     onchain: pd.DataFrame | None = None
+    licence_mode: str = licences.PERSONAL
+    not_compared: list[NotCompared] = field(default_factory=list)
+    alert_skips: list[Skip] = field(default_factory=list)
 
 
 def _pct(v: float | None) -> str:
@@ -139,10 +153,12 @@ def build_blocks(brief: Brief) -> list[Block]:
     b: list[Block] = [
         Block("h1", f"sigstar daily brief: {brief.day.isoformat()}"),
         Block("note", DISCLAIMER),
+        Block("note", licences.statement(brief.licence_mode, brief.sources_used)),
         Block(
             "p",
             "Each day below is a closed UTC day. Moves are close-to-close log returns on the "
-            "reference venue; z-scores compare a value with the previous 30 days.",
+            "reference venue (where that is chainstar's on-chain price, a day's price is the "
+            "median of its DEX swaps); z-scores compare a value with the previous 30 days.",
         ),
     ]
     summary = []
@@ -285,6 +301,24 @@ def build_blocks(brief: Brief) -> list[Block]:
         b.append(
             Block("p", "No feature was 3 or more standard deviations from its recent history.")
         )
+    if brief.not_compared:
+        b.append(
+            Block(
+                "p",
+                "Not checked, because on-chain coverage was not comparable with earlier days "
+                "(a z-score would measure how much data was loaded, not what happened):",
+            )
+        )
+        b.append(
+            Block(
+                "table",
+                headers=["Day", "Assets", "Feature", "Why"],
+                rows=[
+                    [str(n.day), ", ".join(n.assets), n.label, n.note]
+                    for n in brief.not_compared[:30]
+                ],
+            )
+        )
 
     b.append(Block("h2", "Alerts"))
     if brief.alerts:
@@ -308,6 +342,21 @@ def build_blocks(brief: Brief) -> list[Block]:
         b.append(Block("note", DISCLAIMER))
     else:
         b.append(Block("p", "No rule fired on the latest day."))
+    if brief.alert_skips:
+        b.append(
+            Block(
+                "p",
+                "Conditions not evaluated, because on-chain coverage was not comparable with "
+                "enough earlier days (they count as not met):",
+            )
+        )
+        b.append(
+            Block(
+                "table",
+                headers=["Rule", "Asset", "Day", "Feature", "Why"],
+                rows=[[s.rule, s.asset, s.day, s.feature, s.reason] for s in brief.alert_skips],
+            )
+        )
 
     if brief.relationships is not None:
         b += _relationship_blocks(brief.relationships)
@@ -321,7 +370,9 @@ def build_blocks(brief: Brief) -> list[Block]:
         for name in brief.rss_attributions
     ]
     b.append(Block("links", links=[(line, None) for line in lines]))
-    b.append(Block("note", PERSONAL_USE))
+    b.append(
+        Block("note", COMMERCIAL_USE if brief.licence_mode == licences.COMMERCIAL else PERSONAL_USE)
+    )
     b.append(Block("p", f"Made with sigstar {__version__} ({PROJECT_URL}). {DISCLAIMER}"))
     return b
 
@@ -452,6 +503,7 @@ ONCHAIN_METRICS = {
     "fees_native": "Fees (native coin)",
     "stablecoin_transfer_amount": "Stablecoin transferred",
     "coverage_seconds": "First to last block (s)",
+    "blocks": "Blocks loaded",
 }
 
 
@@ -480,8 +532,10 @@ def _onchain_blocks(onchain: pd.DataFrame) -> list[Block]:
             "note",
             "From the attached chainstar warehouse. 'First to last block' is the time between "
             "the first and last block in the slice: a slice of seconds or minutes is a sample, "
-            "not the day's total, and on-chain z-scores need at least 10 earlier days, so "
-            "these numbers do not enter the explanations until more days are collected. "
+            "not the day's total. On-chain z-scores compare a day only with at least 10 "
+            "earlier days on which the same chains were loaded with similar block counts "
+            "(analysis: onchain_coverage_tolerance, 10% by default), so a day with more or "
+            "other chains loaded is not ranked. "
             "Stablecoins are counted by contract address, never by symbol.",
         ),
     ]

@@ -12,7 +12,7 @@ from typing import Annotated
 
 import typer
 
-from sigstar import __version__, render
+from sigstar import __version__, licences, render
 from sigstar.alerts import RULES_TEMPLATE
 from sigstar.config import CONFIG_FILENAME, Config, fred_api_key, load_config, render_template
 from sigstar.disclaimer import DISCLAIMER
@@ -163,10 +163,13 @@ def explain(
     else:
         days = [_parse_day(day) or workflow.latest_day(df, symbol)]
     explanations = [workflow.explain_one(cfg, df, symbol, d) for d in days]
+    licence = workflow.licence_line(cfg)
     if as_json:
-        typer.echo(json.dumps([e.to_dict() for e in explanations], indent=2, default=str))
+        payload = [{**e.to_dict(), "licence": licence} for e in explanations]
+        typer.echo(json.dumps(payload, indent=2, default=str))
         return
     typer.echo("\n\n".join(render.explanation(e) for e in explanations))
+    typer.echo(licence)
 
 
 @app.command()
@@ -201,6 +204,7 @@ def forecast(
         blocks += [render.forecast(f) for f in results]
     typer.echo("\n\n".join(blocks))
     typer.echo(f"\n{DISCLAIMER}")
+    typer.echo(workflow.licence_line(cfg))
 
 
 @app.command()
@@ -213,7 +217,7 @@ def alerts(
     from sigstar.analysis import data
 
     cfg = _cfg()
-    fired, new, problems = workflow.evaluate_alerts(
+    fired, new, problems, _ = workflow.evaluate_alerts(
         cfg, data.features(cfg), _parse_day(day), send=not no_webhook
     )
     if not fired:
@@ -226,6 +230,7 @@ def alerts(
     )
     for p in problems:
         typer.echo(f"warning  {p}")
+    typer.echo(workflow.licence_line(cfg))
 
 
 @app.command()
@@ -234,6 +239,7 @@ def anomalies(
     threshold: Annotated[float | None, typer.Option(help="|z| threshold (default 3).")] = None,
 ) -> None:
     """List features far from their own recent history (z and robust z)."""
+    from sigstar import workflow
     from sigstar.analysis import anomalies as an
     from sigstar.analysis import data
 
@@ -243,7 +249,9 @@ def anomalies(
     items = an.find(
         df, threshold or cfg.analysis.get("anomaly_z", 3.0), end - timedelta(days=days - 1), end
     )
-    typer.echo(render.anomalies(items))
+    skipped = an.not_comparable(df, end - timedelta(days=days - 1), end)
+    typer.echo(render.anomalies(items, skipped))
+    typer.echo(workflow.licence_line(cfg))
 
 
 @app.command()
@@ -251,10 +259,13 @@ def relationships(
     benchmark: Annotated[str, typer.Option(help="Asset for betas.")] = "BTC",
 ) -> None:
     """Correlations, betas, lead/lag, Granger tests and volatility regimes."""
+    from sigstar import workflow
     from sigstar.analysis import data
     from sigstar.analysis import relationships as rel
 
-    typer.echo(render.relationships(rel.analyse(data.features(_cfg()), benchmark.upper())))
+    cfg = _cfg()
+    typer.echo(render.relationships(rel.analyse(data.features(cfg), benchmark.upper())))
+    typer.echo(workflow.licence_line(cfg))
 
 
 def _report(cfg: Config, window_days: int) -> None:
@@ -263,6 +274,7 @@ def _report(cfg: Config, window_days: int) -> None:
 
     brief = workflow.build_brief(cfg, window_days)
     md, html = rp.write(brief, cfg.report_dir)
+    typer.echo(f"report   {licences.statement(brief.licence_mode, brief.sources_used)}")
     typer.echo(f"report   {md}")
     typer.echo(f"report   {html}")
 
@@ -289,7 +301,7 @@ def run(
             "no stream could be collected", "see the lines above; try `sigstar doctor`"
         )
     _build(cfg)
-    fired, new, problems = workflow.evaluate_alerts(cfg, data.features(cfg))
+    fired, new, problems, _ = workflow.evaluate_alerts(cfg, data.features(cfg))
     for a in new:
         typer.echo(render.alert(a))
     typer.echo(f"alerts   {len(fired)} fired, {len(new)} new")

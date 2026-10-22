@@ -2,7 +2,8 @@
 -- form: one row per day, chain, metric and token. Stablecoins are picked by contract
 -- address (mint on Solana), never by symbol. Empty when no chainstar warehouse is set.
 -- chainstar slices can cover minutes rather than whole days; coverage_seconds says how much
--- of each day the numbers come from.
+-- of each day the numbers come from, and blocks how many blocks (Solana: slots with a
+-- block) of each chain were loaded that day, which is what on-chain z-scores compare.
 {% if var('chainstar_enabled') %}
 {% set stablecoins = var('stablecoins') %}
 with stable as (
@@ -22,6 +23,7 @@ transfers as (
     select
         f.date_day as day,
         f.chain,
+        f.block_number,
         f.block_timestamp,
         case
             when f.token_address = 'native' then 'native'
@@ -39,8 +41,14 @@ transfers as (
 ),
 
 fees as (
-    select date_day as day, chain, block_timestamp, from_address, fee_native
+    select date_day as day, chain, block_number, block_timestamp, from_address, fee_native
     from chainstar_wh.chainstar.fct_fees
+),
+
+loaded_blocks as (
+    select day, chain, block_number from transfers
+    union
+    select day, chain, block_number from fees
 ),
 
 metrics as (
@@ -66,6 +74,9 @@ metrics as (
     select day, chain, 'coverage_seconds', '',
         date_diff('second', min(block_timestamp), max(block_timestamp))::double
     from fees group by all
+    union all
+    select day, chain, 'blocks', '', count(distinct block_number)::double
+    from loaded_blocks group by all
 )
 
 select * from metrics

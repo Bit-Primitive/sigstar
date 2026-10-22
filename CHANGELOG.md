@@ -46,3 +46,51 @@ All notable changes to sigstar are recorded here. The format follows
   charts and source attribution.
 - `sigstar init`, `sigstar run` (for cron or systemd), `sigstar doctor`.
 - No telemetry: dlt's and dbt's anonymous usage statistics are switched off.
+- On-chain prices and DEX activity from chainstar: chainstar's USD prices from DEX swaps
+  (`fct_token_prices`, hourly and daily, high and medium confidence only, closed buckets
+  only) for each asset's `onchain.prices` tokens, matched by chain and address (ETH from
+  WETH on Ethereum and Base, SOL from SOL and wrapped SOL, BTC from wrapped BTC via
+  `cross_chain_wrapped_btc`), in a new mart `fct_onchain_prices` and in `fct_prices` as the
+  venue `onchain`, with chain, method, confidence and observation count carried through.
+  The on-chain price is the reference close when no exchange has the day. New mart
+  `fct_onchain_dex_daily` from `fct_swaps` (verified pools only on Ethereum and Base).
+- Features `onchain_dex_volume_usd`/`_z`, `onchain_swap_count`/`_z`,
+  `onchain_price_gap_bps`/`_z` (on-chain vs exchange price, hour by hour), and the day's
+  on-chain price with its chain, method, confidence and observations. The z-scored ones are
+  drivers in `explain`, scanned by `anomalies` and usable in alert rules; `explain` names the
+  source of an on-chain reference price and how much of the day a chainstar sample covers.
+- Licence modes: `sources: licence_mode: personal | commercial`. Commercial mode switches
+  off every source whose terms restrict commercial use or do not clearly allow it (Coinbase,
+  Kraken, Binance spot and futures, OKX, RSS feeds; FRED series other than the public-domain
+  DFF, DGS10 and DTWEXBGS), in collection, in `doctor` and in the dbt staging models (rows
+  collected earlier are dropped too), and runs on Fear & Greed, GDELT, FRED and chainstar.
+  `doctor`, the brief and every command that prints analysis state the mode and the sources
+  the data came from, read from the warehouse. SOURCES.md records each source's terms as
+  re-checked on 2026-10-22.
+- On-chain z-scores compare like with like: a day is compared only with earlier days on
+  which every chain behind the number was loaded, with a block count within 10%
+  (`analysis: onchain_coverage_tolerance`), summed over the same chains. Otherwise the
+  z-score is empty, the feature is not ranked, and `<column>_note` (repeated by `explain`,
+  `anomalies` and the brief) says which chain was missing or loaded differently. Applies to
+  every on-chain feature, the existing ones included, and to `range_z` on days priced
+  on-chain; `anomalies` uses no robust z for them. New metric `blocks` in
+  `fct_onchain_daily`.
+- Alert rules: a `pNN` percentile threshold on an on-chain feature is taken only over
+  earlier days of comparable chain coverage (the same rule and tolerance as the on-chain
+  z-scores). With fewer than 20 such days, or on a column that measures the sample itself
+  (coverage seconds, observation and hour counts), the condition is not evaluated and never
+  holds; the skip and its reason are printed, logged once to `alerts-skipped.jsonl` and
+  listed in the brief.
+- A chainstar warehouse built before chainstar read swaps still works for on-chain
+  activity; `doctor` says it has no prices, and commercial mode refuses to build without
+  them.
+
+### Changed
+
+- The Fear & Greed feature is labelled "Fear & Greed Index change (alternative.me)", since
+  its terms ask for attribution right next to the data.
+- Reports credit the sources whose data is in the warehouse, rather than those switched on
+  in `sigstar.yml`.
+- On-chain z-scores (transactions, active wallets, stablecoin transfers) no longer compare
+  days of different chain coverage: a warehouse that held a chain on some days only could
+  make a total look like a many-sigma outlier.

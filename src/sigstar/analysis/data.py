@@ -60,6 +60,83 @@ def features(cfg: Config) -> pd.DataFrame:
     return df
 
 
+# Venue or provider values in the marts, and the source each comes from.
+_PRICE_VENUES = {"coinbase": "coinbase", "kraken": "kraken", "binance": "binance"}
+_DERIVATIVE_VENUES = {"binance": "binance_futures", "okx": "okx"}
+SOURCE_ORDER = (
+    "coinbase",
+    "kraken",
+    "binance",
+    "binance_futures",
+    "okx",
+    "fear_greed",
+    "gdelt",
+    "rss",
+    "fred",
+    "chainstar",
+)
+
+
+def sources_used(cfg: Config) -> tuple[list[str], list[str]]:
+    """The sources whose data is actually in the marts (after the licence mode's filters),
+    in a fixed order, and the RSS feed names among them. This is what reports credit and
+    state, rather than what sigstar.yml switches on."""
+    found: set[str] = set()
+    with connect(cfg) as con:
+
+        def rows(table: str, sql: str) -> list[tuple]:
+            try:
+                return con.execute(sql.format(t=_qualified(con, table))).fetchall()
+            except duckdb.CatalogException:
+                return []
+
+        for (venue,) in rows("fct_prices", "select distinct venue from {t}"):
+            if venue in _PRICE_VENUES:
+                found.add(_PRICE_VENUES[venue])
+            elif venue == "onchain":
+                found.add("chainstar")
+        for (venue,) in rows("fct_derivatives", "select distinct venue from {t}"):
+            if venue in _DERIVATIVE_VENUES:
+                found.add(_DERIVATIVE_VENUES[venue])
+        if rows("fct_sentiment", "select 1 from {t} limit 1"):
+            found.add("fear_greed")
+        if rows("agg_news_daily", "select 1 from {t} where gdelt_all_articles is not null limit 1"):
+            found.add("gdelt")
+        if rows("fct_news", "select 1 from {t} where provider = 'gdelt' limit 1"):
+            found.add("gdelt")
+        feeds = [
+            str(name)
+            for (name,) in rows(
+                "fct_news",
+                "select distinct source_name from {t} where provider = 'rss' order by 1",
+            )
+        ]
+        if feeds:
+            found.add("rss")
+        if rows("fct_macro", "select 1 from {t} limit 1"):
+            found.add("fred")
+        if rows("fct_onchain_daily", "select 1 from {t} limit 1"):
+            found.add("chainstar")
+    return [s for s in SOURCE_ORDER if s in found], feeds
+
+
+def onchain_parts(cfg: Config) -> pd.DataFrame:
+    """Each on-chain feature's part per chain and day, with that chain's blocks loaded
+    (dbt: int_onchain_feature_parts); empty when there is none."""
+    columns = ["asset", "day", "feature", "chain", "value", "blocks"]
+    with connect(cfg) as con:
+        catalog = con.execute("select current_database()").fetchone()[0]
+        try:
+            df = con.execute(
+                f'select {", ".join(columns)} from "{catalog}".sigstar_staging.'
+                "int_onchain_feature_parts where value is not null"
+            ).df()
+        except duckdb.CatalogException:
+            return pd.DataFrame(columns=columns)
+    df["day"] = pd.to_datetime(df["day"]).dt.date
+    return df
+
+
 def headlines(cfg: Config, tag: str, day: date, limit: int = 5) -> pd.DataFrame:
     """Headlines tagged with an asset or topic on one UTC day, feed items first (they carry
     a publisher snippet), then GDELT's list in its relevance order."""

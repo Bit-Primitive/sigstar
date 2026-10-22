@@ -11,3 +11,4 @@ select
     funding_rate,
     mark_price
 from raw
+where true {{ licence_exclude('venue', 'derivatives') }}

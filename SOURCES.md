@@ -20,6 +20,42 @@ How sigstar behaves with every source:
   text, and drops full text a feed embeds (`content:encoded`).
 - Everything stays on your computer. Reports are for you: several venues license their
   market data for personal use only, so do not publish or redistribute reports or data.
+  For a report you may use commercially, see [Licence modes](#licence-modes).
+
+## Licence modes
+
+`sources: licence_mode:` in `sigstar.yml` is `personal` (the default) or `commercial`.
+
+- **personal**: every source you enable, for your own use. Exchange data is licensed for
+  that and no more, so keep reports to yourself.
+- **commercial**: only sources whose published terms clearly allow commercial use, plus
+  on-chain data and USD prices from your [chainstar](https://bitprimitive.com/projects/chainstar)
+  warehouse. Every other source is switched off whatever its `enabled` says: it is not
+  collected, `doctor` does not contact it, and rows it left in the warehouse from earlier
+  personal-mode runs are dropped by the dbt staging models, so nothing from it reaches a
+  mart, an explanation or a report. Prices then come only from chainstar.
+
+Where a source's terms are unclear about commercial use, sigstar treats it as restricted.
+Re-checked on **2026-10-22**:
+
+| Source | Commercial mode | Why (the terms, quoted in each section below) |
+| --- | --- | --- |
+| Coinbase Exchange | **off** | Market Data Terms: "exclusively for you or your entity's personal or research purposes"; no display of data "or any data, charts, analytics ... derived from" it to third parties. Live page answered 403 again on 2026-10-22; the recorded reading (Dec 2025 archive copy of the 6 Feb 2023 terms) stands. |
+| Kraken | **off** | API introduction (re-read 2026-10-22): prior permission needed for "any non-personal commercial use of data from publicly accessible endpoints, such as market data" (contact marketdata@kraken.com). |
+| Binance spot and USDⓈ-M futures | **off** | Terms of Use licence "for non-commercial personal or internal business use". The terms page loads with JavaScript and could not be re-read on 2026-10-22; the recorded reading stands. |
+| OKX | **off** | API Agreement (last updated 28 July 2026, re-read 2026-10-22) §9.4: market data "solely for your own personal, non-commercial trading and account management purposes"; §3.2(a) applies it to public endpoints without a key. |
+| Bitcoin Magazine RSS (and any feed you add) | **off** | Terms (effective Feb 2025, re-read 2026-10-22) say nothing about commercial use, RSS or automated access, and prohibit "unauthorized reproduction, distribution, or modification ... without our prior written consent". Unclear, so restricted. Feeds you add have unknown terms and are treated the same way. |
+| Crypto Fear & Greed Index (alternative.me) | on | "Commercial use is allowed as long as the attribution is given right next to the display of the data" (re-read 2026-10-22). sigstar labels the feature "Fear & Greed Index change (alternative.me)" wherever it is shown, and credits it in reports. |
+| GDELT DOC 2.0 | on | "unlimited and unrestricted use for any academic, commercial, or governmental use of any kind without fee", with a citation and link (re-read 2026-10-22). Headlines GDELT lists belong to their publishers; sigstar shows the title and a link, never article text. |
+| FRED | on, public-domain series only | The API terms (re-read 2026-10-22, undated) set no commercial restriction on FRED itself, but series "owned by third parties" need the owner's permission "for anything other than your own personal use". sigstar keeps only DFF, DGS10 and DTWEXBGS, each "Public Domain: Citation Requested"; any other series you list is left out in commercial mode with a notice. |
+| chainstar warehouse | on | Blockchain data and USD prices chainstar derives on your computer from DEX swaps; no price service or data vendor is involved. The RPC provider chainstar read the chain from has its own terms, which sigstar cannot see: see [On-chain](#on-chain). |
+
+What commercial mode cannot give you: exchange closing prices, cross-venue spread and
+exchange volume (so no volume forecasts), funding and open interest, RSS headlines, the
+on-chain vs exchange price gap, and FRED series outside the three above. `sigstar doctor`
+prints the mode and why each source is on or off, and every report and command output
+states the mode and the sources its data came from (read from the warehouse, not from the
+config). This is a reading of published terms, not legal advice.
 
 ## Summary
 
@@ -35,7 +71,7 @@ How sigstar behaves with every source:
 | Bitcoin Magazine RSS | headlines | on | no | at most every 15 min (robots Crawl-delay 5 s) | publisher name, each headline links to it |
 | FRED | macro series | on if key set | **yes** (free) | 1 request / 0.6 s | FRED notice + per-series source |
 | CoinDesk, Cointelegraph, Decrypt, The Block, CryptoSlate RSS | | **left out** | | | see below |
-| chainstar warehouse | on-chain activity | if configured | no | local file | |
+| chainstar warehouse | on-chain activity, DEX volume, USD prices from DEX swaps | if configured | no | local file | "On-chain data and USD prices: chainstar" |
 
 ## Market data
 
@@ -223,8 +259,27 @@ robots.txt and terms first. sigstar will refuse any feed its robots.txt disallow
 
 - Read-only `ATTACH` of a DuckDB file built by
   [chainstar](https://bitprimitive.com/projects/chainstar) (tables in schema `chainstar`).
-  sigstar reads `fct_transfers` and `fct_fees` and never writes to the file. The data comes
-  from whatever RPC endpoint you used with chainstar, under that provider's terms.
+  sigstar reads `fct_transfers` and `fct_fees`, and, when the warehouse has them (chainstar
+  releases that read swaps), `fct_token_prices` and `fct_swaps`; it never writes to the
+  file. The data comes from whatever RPC endpoint you used with chainstar, under that
+  provider's terms.
+- Prices: chainstar's `fct_token_prices`, hourly and daily, for each asset's
+  `onchain.prices` tokens (ETH: `native` on Ethereum and Base, which chainstar prices from
+  WETH; SOL: `native` on Solana, from SOL and wrapped SOL; BTC: `native` on Bitcoin, which
+  chainstar prices from wrapped BTC on Ethereum and Base, method `cross_chain_wrapped_btc`,
+  at most medium confidence). Only rows where chainstar gives a `usd_price` (high or medium
+  confidence) and only buckets the chain's loaded blocks have run past. Matched by chain
+  and token address, never by symbol.
+- DEX activity: chainstar's `fct_swaps` in each asset's `onchain.dex_tokens` (WETH on
+  Ethereum and Base; WBTC and cbBTC; SOL), in verified pools on Ethereum and Base and in
+  Solana's known DEX programs, valued at chainstar's hourly on-chain price.
+- RPC terms in commercial mode: chainstar's default endpoints are PublicNode's. PublicNode's
+  terms of service (publicnode.com/terms, undated, read 2026-10-22) define "the Service" as
+  the www.publicnode.com website and forbid "data mining, robots, scraping, or similar data
+  gathering" and "copying, distributing or disclosing any part of the Service"; they do not
+  say clearly whether that covers data read through the free RPC endpoints. sigstar cannot
+  tell which endpoint built a warehouse. For commercial use, build the chainstar warehouse
+  from your own node or a provider whose terms allow your use.
 - Stablecoins are matched by contract address (Solana: mint), never by symbol, because
   copies with the same symbol exist (the real demo warehouse holds tokens named USDC and
   USDT at other addresses). Default addresses were checked against Circle's and Tether's

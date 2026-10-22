@@ -21,4 +21,4 @@ select
     vwap,
     trades
 from raw
-where close > 0
+where close > 0 {{ licence_exclude('venue', 'candles') }}

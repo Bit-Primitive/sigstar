@@ -47,6 +47,9 @@ class Move:
     venue: str
     rank_in_window: int | None
     window_days: int
+    # Where an on-chain reference price came from (chain, method, confidence); None for
+    # an exchange close.
+    price_source: str | None = None
 
 
 @dataclass
@@ -119,6 +122,7 @@ def explain_day(
         venue=str(today["ref_venue"]),
         rank_in_window=abs_rank,
         window_days=len(window),
+        price_source=onchain_price_source(today) if today["ref_venue"] == "onchain" else None,
     )
 
     catalog = [f for f in features_for(list(df.columns), asset) if f.z_column != "ret_1d_z"]
@@ -173,7 +177,36 @@ def explain_day(
                 }
             )
     context = headlines(asset, day)[:3] if headlines is not None else []
-    return Explanation(move, drivers, co, checked, coverage_notes(today), context)
+    notes = coverage_notes(today)
+    for offset, timing in ((0, "same day"), (1, "day before")):
+        if i - offset >= 0:
+            notes += comparability_notes(rows.loc[i - offset], catalog, timing)
+    return Explanation(move, drivers, co, checked, notes, context)
+
+
+def comparability_notes(row: pd.Series, catalog: list[Feature], timing: str) -> list[str]:
+    """Features left unranked because the chains behind them were not loaded comparably
+    on enough earlier days (the dbt <z>_note column says which chain and how often)."""
+    out = []
+    for feature in catalog:
+        note = row.get(f"{feature.z_column}_note")
+        if isinstance(note, str) and note:
+            out.append(f"{feature.label} ({timing}) not ranked, {note}")
+    return out
+
+
+def onchain_price_source(row: pd.Series) -> str | None:
+    """'chainstar, ethereum, swaps_vs_stablecoins, high confidence, 97 swaps' for a day
+    whose price is chainstar's on-chain price."""
+    chain = row.get("onchain_price_chain")
+    if chain is None or (isinstance(chain, float) and math.isnan(chain)):
+        return None
+    observations = _finite(row.get("onchain_price_observations"))
+    swaps = f", {observations:,.0f} swaps" if observations is not None else ""
+    return (
+        f"chainstar on-chain DEX price: {chain}, {row.get('onchain_price_method')}, "
+        f"{row.get('onchain_price_confidence')} confidence{swaps}"
+    )
 
 
 def coverage_notes(row: pd.Series) -> list[str]:
@@ -182,7 +215,7 @@ def coverage_notes(row: pd.Series) -> list[str]:
     missing = {
         "derivatives": ["funding_z", "oi_change_z"],
         "news": ["news_volume_z", "news_tone_z"],
-        "on-chain": ["onchain_tx_count_z"],
+        "on-chain": ["onchain_tx_count_z", "onchain_dex_volume_z"],
     }
     for angle, cols in missing.items():
         if all(_finite(row.get(c)) is None for c in cols):
@@ -192,6 +225,17 @@ def coverage_notes(row: pd.Series) -> list[str]:
         notes.append(
             f"on-chain numbers span only {coverage:.0f} seconds of this day "
             "(chainstar slice), so they are a sample, not the day's total"
+        )
+    dex_coverage = _finite(row.get("onchain_dex_coverage_seconds"))
+    if dex_coverage is not None and dex_coverage < 86000:
+        notes.append(
+            f"DEX swaps span only {dex_coverage:.0f} seconds of this day on at least one "
+            "chain (chainstar slice): DEX volume and swap counts are a sample"
+        )
+    if row.get("ref_venue") == "onchain":
+        notes.append(
+            "the close is chainstar's on-chain price: the median of the day's DEX swaps "
+            "(medium or high confidence), not an exchange closing price"
         )
     return notes
 

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sigstar.build import check_chainstar
+from sigstar import licences
+from sigstar.build import chainstar_has_prices, check_chainstar
 from sigstar.config import Config, fred_api_key, webhook_url
 from sigstar.errors import SigstarError
 from sigstar.http import PoliteClient
@@ -74,7 +75,22 @@ def run_checks(cfg: Config, client: PoliteClient) -> list[Check]:
             f"{cfg.warehouse} ({'exists' if cfg.warehouse.exists() else 'not yet created'})",
         ),
     ]
+    commercial = cfg.licence_mode == licences.COMMERCIAL
+    checks.append(
+        Check(
+            "licence mode",
+            True,
+            "commercial: only sources whose terms allow commercial use, plus chainstar"
+            if commercial
+            else "personal: every enabled source, for your own use",
+        )
+    )
     for name, (url, params, note) in PROBES.items():
+        if not licences.allows(cfg.licence_mode, name):
+            checks.append(
+                Check(name, True, f"off in commercial mode ({licences.TERMS[name].note})")
+            )
+            continue
         if not cfg.source_enabled(name):
             checks.append(Check(name, True, f"disabled in sigstar.yml ({note})"))
             continue
@@ -83,6 +99,8 @@ def run_checks(cfg: Config, client: PoliteClient) -> list[Check]:
             checks.append(Check(name, True, f"reachable; {note}"))
         except SigstarError as exc:
             checks.append(Check(name, False, f"{exc} (hint: {exc.hint})"))
+    if not licences.allows(cfg.licence_mode, "rss"):
+        checks.append(Check("rss", True, f"off in commercial mode ({licences.TERMS['rss'].note})"))
     if cfg.source_enabled("rss"):
         for feed in cfg.sources.get("rss", {}).get("feeds") or []:
             try:
@@ -92,15 +110,15 @@ def run_checks(cfg: Config, client: PoliteClient) -> list[Check]:
                 checks.append(Check(f"rss:{feed['name']}", False, str(exc)))
     if cfg.source_enabled("fred"):
         key = fred_api_key()
-        checks.append(
-            Check(
-                "fred",
-                True,
-                "SIGSTAR_FRED_API_KEY is set"
-                if key
-                else "SIGSTAR_FRED_API_KEY not set: macro data will be skipped (optional)",
-            )
+        detail = (
+            "SIGSTAR_FRED_API_KEY is set"
+            if key
+            else "SIGSTAR_FRED_API_KEY not set: macro data will be skipped (optional)"
         )
+        if commercial:
+            kept = ", ".join(cfg.fred_series()) or "none"
+            detail += f"; commercial mode keeps the public-domain series: {kept}"
+        checks.append(Check("fred", True, detail))
     checks.append(
         Check(
             "webhook",
@@ -109,12 +127,32 @@ def run_checks(cfg: Config, client: PoliteClient) -> list[Check]:
         )
     )
     if cfg.chainstar_warehouse is None:
-        checks.append(Check("chainstar", True, "not configured (optional on-chain angle)"))
+        checks.append(
+            Check(
+                "chainstar",
+                not commercial,
+                "not configured: commercial mode has no price source without it"
+                if commercial
+                else "not configured (optional on-chain angle)",
+            )
+        )
     else:
         try:
             check_chainstar(cfg.chainstar_warehouse)
+            prices = chainstar_has_prices(cfg.chainstar_warehouse)
+            detail = (
+                "with swaps and on-chain USD prices"
+                if prices
+                else "without swaps or USD prices (built before chainstar read swaps; "
+                "rebuild with `chainstar sync --full-refresh` for on-chain prices)"
+            )
             checks.append(
-                Check("chainstar", True, f"{cfg.chainstar_warehouse} has chainstar tables")
+                Check(
+                    "chainstar",
+                    prices or not commercial,
+                    f"{cfg.chainstar_warehouse} has chainstar tables, {detail}; "
+                    f"{licences.TERMS['chainstar'].note}",
+                )
             )
         except SigstarError as exc:
             checks.append(Check("chainstar", False, str(exc)))

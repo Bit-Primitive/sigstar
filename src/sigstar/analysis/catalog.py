@@ -49,6 +49,10 @@ class Feature:
     group: str
     fmt: Callable[[float], str]
     tag: str | None = None  # news tag whose headlines are evidence for this feature
+    # On-chain features whose z-scores compare only days of comparable chain coverage
+    # (dbt: int_onchain_feature_z). A robust z over all past days would ignore that, so
+    # anomalies use the dbt z-score alone for these.
+    coverage_gated: bool = False
 
 
 STATIC: tuple[Feature, ...] = (
@@ -64,15 +68,28 @@ STATIC: tuple[Feature, ...] = (
     Feature("news_volume_z", "news_volume", "News volume (GDELT articles)", "news", _int),
     Feature("news_tone_z", "news_tone", "News tone (GDELT, -10..+10)", "news", _num),
     Feature(
-        "fear_greed_change_z", "fear_greed_change", "Fear & Greed Index change", "sentiment", _num
+        "fear_greed_change_z",
+        "fear_greed_change",
+        # alternative.me asks for attribution right next to the data.
+        "Fear & Greed Index change (alternative.me)",
+        "sentiment",
+        _num,
     ),
-    Feature("onchain_tx_count_z", "onchain_tx_count", "On-chain transactions", "onchain", _int),
+    Feature(
+        "onchain_tx_count_z",
+        "onchain_tx_count",
+        "On-chain transactions",
+        "onchain",
+        _int,
+        coverage_gated=True,
+    ),
     Feature(
         "onchain_active_wallets_z",
         "onchain_active_wallets",
         "On-chain active wallets",
         "onchain",
         _int,
+        coverage_gated=True,
     ),
     Feature(
         "stablecoin_transfer_z",
@@ -80,6 +97,31 @@ STATIC: tuple[Feature, ...] = (
         "Stablecoin transfer volume",
         "onchain",
         _usd,
+        coverage_gated=True,
+    ),
+    Feature(
+        "onchain_dex_volume_z",
+        "onchain_dex_volume_usd",
+        "On-chain DEX volume (chainstar)",
+        "onchain",
+        _usd,
+        coverage_gated=True,
+    ),
+    Feature(
+        "onchain_swap_count_z",
+        "onchain_swap_count",
+        "On-chain DEX swaps",
+        "onchain",
+        _int,
+        coverage_gated=True,
+    ),
+    Feature(
+        "onchain_price_gap_z",
+        "onchain_price_gap_bps",
+        "On-chain vs exchange price gap",
+        "onchain",
+        _bps,
+        coverage_gated=True,
     ),
 )
 
@@ -107,7 +149,7 @@ def features_for(columns: list[str], asset: str) -> list[Feature]:
             found.append(Feature(column, f"macro_{m['series']}_change", label, "macro", _num))
     # Asset news features carry the asset's own headlines as evidence.
     return [
-        Feature(f.z_column, f.value_column, f.label, f.group, f.fmt, asset)
+        Feature(f.z_column, f.value_column, f.label, f.group, f.fmt, asset, f.coverage_gated)
         if f.z_column in ("news_volume_z", "news_tone_z")
         else f
         for f in found

@@ -20,6 +20,7 @@ from typing import Any
 import duckdb
 import yaml
 
+from sigstar import licences
 from sigstar.config import Config
 from sigstar.errors import SigstarError
 
@@ -65,12 +66,20 @@ def dbt_vars(cfg: Config) -> dict[str, Any]:
                 f"topic name {key!r} can only use lowercase letters, digits and _",
                 "rename it under topics: in sigstar.yml (it becomes a column name)",
             )
-    series = [str(s) for s in cfg.sources.get("fred", {}).get("series") or []]
+    series = cfg.fred_series()
     for s in series:
         if not re.fullmatch(r"[A-Za-z0-9]+", s):
             raise SigstarError(f"FRED series id {s!r} is not valid", "use ids like DGS10")
     return {
-        "assets": [{"symbol": a.symbol, "chains": list(a.chains)} for a in cfg.assets.values()],
+        "assets": [
+            {
+                "symbol": a.symbol,
+                "chains": list(a.chains),
+                "onchain_prices": [{"chain": t.chain, "token": t.token} for t in a.onchain_prices],
+                "dex_tokens": [{"chain": t.chain, "token": t.token} for t in a.dex_tokens],
+            }
+            for a in cfg.assets.values()
+        ],
         "topics": list(cfg.topics),
         "news_rules": news_rules(cfg),
         "stablecoins": [
@@ -78,8 +87,57 @@ def dbt_vars(cfg: Config) -> dict[str, Any]:
         ],
         "fred_series": series,
         "chainstar_enabled": cfg.chainstar_warehouse is not None,
+        "licence": licence_vars(cfg),
         "zscore_window": int(cfg.analysis.get("zscore_window_days", 30)),
+        "onchain_coverage_tolerance": float(cfg.analysis.get("onchain_coverage_tolerance", 0.1)),
     }
+
+
+# Raw rows of each source, as the staging models see them: (table kind, venue or provider).
+SOURCE_ROWS: dict[str, tuple[str, str]] = {
+    "coinbase": ("candles", "coinbase"),
+    "kraken": ("candles", "kraken"),
+    "binance": ("candles", "binance"),
+    "binance_futures": ("derivatives", "binance"),
+    "okx": ("derivatives", "okx"),
+    "gdelt": ("news", "gdelt"),
+    "rss": ("news", "rss"),
+}
+
+
+def licence_vars(cfg: Config) -> dict[str, Any]:
+    """What the staging models drop under the licence mode. Rows already collected (in an
+    earlier personal-mode run, say) are dropped too, not only new collection."""
+    mode = cfg.licence_mode
+    excluded: dict[str, list[str]] = {"candles": [], "derivatives": [], "news": []}
+    for source, (kind, value) in SOURCE_ROWS.items():
+        if not licences.allows(mode, source):
+            excluded[kind].append(value)
+    return {
+        "mode": mode,
+        "excluded": excluded,
+        "fear_greed": licences.allows(mode, "fear_greed"),
+        # None keeps every series (personal mode); a list keeps only those.
+        "fred_series": None
+        if mode == licences.PERSONAL
+        else (cfg.fred_series() if licences.allows(mode, "fred") else []),
+    }
+
+
+CHAINSTAR_PRICE_TABLES = ("fct_token_prices", "fct_swaps")
+
+
+def chainstar_has_prices(path: Path) -> bool:
+    """Whether the chainstar warehouse has swaps and USD prices (chainstar releases from
+    October 2026 on; older warehouses have transfers and fees only)."""
+    with duckdb.connect(str(path), read_only=True) as con:
+        found = {
+            row[0]
+            for row in con.execute(
+                "select table_name from information_schema.tables where table_schema = 'chainstar'"
+            ).fetchall()
+        }
+    return all(t in found for t in CHAINSTAR_PRICE_TABLES)
 
 
 def check_chainstar(path: Path) -> None:
@@ -125,8 +183,26 @@ def build(cfg: Config) -> BuildResult:
         raise SigstarError(
             f"the warehouse {cfg.warehouse} does not exist yet", "run `sigstar collect` first"
         )
+    if cfg.licence_mode == licences.COMMERCIAL and cfg.chainstar_warehouse is None:
+        raise SigstarError(
+            "commercial mode has no price source: exchange prices are off, and prices then "
+            "come from a chainstar warehouse",
+            "set chainstar: warehouse: in sigstar.yml (or SIGSTAR_CHAINSTAR_WAREHOUSE), or use "
+            "licence_mode: personal",
+        )
     started = time.monotonic()
     profile_dir = write_profile(cfg)
+    variables = dbt_vars(cfg)
+    variables["chainstar_prices"] = cfg.chainstar_warehouse is not None and chainstar_has_prices(
+        cfg.chainstar_warehouse
+    )
+    if cfg.licence_mode == licences.COMMERCIAL and not variables["chainstar_prices"]:
+        raise SigstarError(
+            f"{cfg.chainstar_warehouse} has no swaps or USD prices, so commercial mode has no "
+            "price source",
+            "rebuild it with a chainstar release that reads swaps: "
+            "`chainstar sync --full-refresh` or any `chainstar run`",
+        )
     target_dir = profile_dir / "target"
     run_results = target_dir / "run_results.json"
     run_results.unlink(missing_ok=True)
@@ -147,7 +223,7 @@ def build(cfg: Config) -> BuildResult:
         "--log-path",
         str(profile_dir / "logs"),
         "--vars",
-        json.dumps(dbt_vars(cfg)),
+        json.dumps(variables),
     ]
     completed = subprocess.run(command, capture_output=True, text=True, check=False)
     log_hint = f"the full dbt log is in {profile_dir / 'logs' / 'dbt.log'}"

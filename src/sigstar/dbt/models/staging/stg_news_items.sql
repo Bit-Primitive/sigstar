@@ -15,4 +15,4 @@ select
     snippet,
     query_key
 from raw
-where url is not null and title is not null
+where url is not null and title is not null {{ licence_exclude('provider', 'news') }}

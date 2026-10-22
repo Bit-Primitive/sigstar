@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: fct_prices
-    description: "Closed OHLCV candles. Grain: asset, venue, interval, ts (candle open, UTC)."
+    description: "Closed OHLCV candles, and chainstar's on-chain price as venue onchain. Grain: asset, venue, interval, ts (candle or bucket start, UTC)."
     data_tests:
       - unique_combination:
           arguments:
@@ -10,6 +10,13 @@ models:
       - expression_true:
           arguments:
             expression: "high >= low"
+      - expression_true:
+          arguments:
+            # On-chain rows always say where they came from; exchange rows never do.
+            expression: >-
+              (venue = 'onchain') = (price_confidence is not null)
+              and (venue <> 'onchain' or (price_method is not null and price_chain is not null
+              and close between low and high))
     columns:
       - name: asset
         data_tests: [not_null]
@@ -18,7 +25,7 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: [coinbase, kraken, binance]
+                values: [coinbase, kraken, binance, onchain]
       - name: interval
         data_tests:
           - accepted_values:
@@ -139,6 +146,61 @@ models:
               arguments:
                 min_value: 0
 
+  - name: fct_onchain_prices
+    description: "chainstar's USD prices from DEX swaps for the configured tokens, high and medium confidence only. Grain: asset, chain, interval, ts."
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [asset, chain, '"interval"', ts]
+      - expression_true:
+          arguments:
+            expression: "usd_price > 0 and usd_price between price_low and price_high"
+    columns:
+      - name: confidence
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [high, medium]
+      - name: price_method
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - swaps_vs_stablecoins
+                  - swaps_vs_native
+                  - swaps_vs_stablecoins_and_native
+                  - cross_chain_wrapped_btc
+      - name: interval
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["1d", "1h"]
+      - name: price_id
+        data_tests: [not_null]
+
+  - name: fct_onchain_dex_daily
+    description: "DEX swaps in each asset's tokens per UTC day and chain, from chainstar."
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [asset, day, chain]
+      - expression_true:
+          arguments:
+            expression: "valued_swaps <= swap_count and volume_usd >= 0"
+
+  - name: int_onchain_feature_z
+    description: "On-chain z-scores against earlier days of comparable chain coverage only, with a note when there were too few."
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [asset, feature, day]
+      - expression_true:
+          arguments:
+            # A z-score never comes with a "not comparable" note, and needs enough days.
+            expression: "(z is null or (note is null and comparable_days >= 10)) and comparable_days <= window_days"
+
   - name: features_daily
     description: "One row per asset and UTC day: returns, volatility, volume, spread, funding, OI, news, sentiment, macro and on-chain features with trailing z-scores."
     data_tests:
@@ -162,6 +224,16 @@ models:
                 min_value: 0
                 max_value: 100
       - name: rv_30d
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: onchain_price_confidence
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [high, medium]
+      - name: onchain_dex_volume_usd
         data_tests:
           - accepted_range:
               arguments:

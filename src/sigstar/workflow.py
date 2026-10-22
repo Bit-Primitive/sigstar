@@ -8,9 +8,9 @@ from datetime import date, timedelta
 import pandas as pd
 
 from sigstar import alerts as alerts_mod
-from sigstar import report
+from sigstar import licences, report
 from sigstar.analysis import anomalies, data, explain, forecast, relationships
-from sigstar.config import Config, fred_api_key, webhook_url
+from sigstar.config import Config, webhook_url
 from sigstar.errors import SigstarError
 
 
@@ -65,18 +65,27 @@ def forecasts(
 
 def evaluate_alerts(
     cfg: Config, df: pd.DataFrame, day: date | None = None, send: bool = True
-) -> tuple[list[alerts_mod.Alert], list[alerts_mod.Alert], list[str]]:
-    """Evaluate rules; log new alerts; send them to the webhook. Returns (all fired, newly
-    logged, problems)."""
+) -> tuple[list[alerts_mod.Alert], list[alerts_mod.Alert], list[str], list[alerts_mod.Skip]]:
+    """Evaluate rules; log new alerts (and skipped on-chain conditions); send new alerts to
+    the webhook. Returns (all fired, newly logged, problems, skipped conditions)."""
     rules_path = cfg.resolve(cfg.alerts.get("rules_file", "sigstar-rules.yml"))
     rules, lookback = alerts_mod.load_rules(rules_path)
-    fired = alerts_mod.evaluate(rules, df, lookback, day)
-    new = alerts_mod.record(fired, cfg.resolve(cfg.alerts.get("log_file", "alerts.jsonl")))
-    problems: list[str] = []
+    coverage = alerts_mod.Coverage(
+        data.onchain_parts(cfg), float(cfg.analysis.get("onchain_coverage_tolerance", 0.1))
+    )
+    skips: list[alerts_mod.Skip] = []
+    fired = alerts_mod.evaluate(rules, df, lookback, day, coverage, skips)
+    log_file = cfg.resolve(cfg.alerts.get("log_file", "alerts.jsonl"))
+    new = alerts_mod.record(fired, log_file)
+    alerts_mod.record_skips(skips, log_file)
+    problems: list[str] = [
+        f"{s.rule} on {s.asset} ({s.day}): condition on {s.feature} not evaluated, {s.reason}"
+        for s in skips
+    ]
     url = webhook_url()
     if send and url and new:
-        problems = alerts_mod.deliver_webhook(new, url)
-    return fired, new, problems
+        problems += alerts_mod.deliver_webhook(new, url)
+    return fired, new, problems, skips
 
 
 def build_brief(cfg: Config, window_days: int = 90, top_moves: int = 3) -> report.Brief:
@@ -97,9 +106,10 @@ def build_brief(cfg: Config, window_days: int = 90, top_moves: int = 3) -> repor
                 asset, latest, moves, forecasts(cfg, df, asset, list(forecast.TARGETS))
             )
         )
-    fired, _, _ = evaluate_alerts(cfg, df)
+    fired, _, _, alert_skips = evaluate_alerts(cfg, df)
     threshold = cfg.analysis.get("anomaly_z", 3.0)
     found = anomalies.find(df, threshold, end - timedelta(days=6), end)
+    not_compared = anomalies.not_comparable(df, end - timedelta(days=6), end)
     rel = relationships.analyse(df, benchmark="BTC")
     notes = []
     onchain = None
@@ -111,16 +121,9 @@ def build_brief(cfg: Config, window_days: int = 90, top_moves: int = 3) -> repor
             f"On-chain data: chainstar warehouse {cfg.chainstar_warehouse}, "
             f"{onchain['day'].nunique()} day(s) ({days})."
         )
-    used = [
-        name
-        for name in report.ATTRIBUTIONS
-        if cfg.source_enabled(name) and (name != "fred" or fred_api_key() is not None)
-    ]
-    rss = [
-        f.get("attribution", f["name"])
-        for f in (cfg.sources.get("rss", {}).get("feeds") or [])
-        if cfg.source_enabled("rss")
-    ]
+    used, feeds = data.sources_used(cfg)
+    attributions = {f["name"]: f.get("attribution", f["name"]) for f in configured_feeds(cfg)}
+    rss = [attributions.get(name, name) for name in feeds]
     return report.Brief(
         day=end,
         sections=sections,
@@ -132,4 +135,17 @@ def build_brief(cfg: Config, window_days: int = 90, top_moves: int = 3) -> repor
         rss_attributions=rss,
         notes=notes,
         onchain=onchain,
+        licence_mode=cfg.licence_mode,
+        not_compared=not_compared,
+        alert_skips=alert_skips,
     )
+
+
+def configured_feeds(cfg: Config) -> list[dict]:
+    return list(cfg.sources.get("rss", {}).get("feeds") or [])
+
+
+def licence_line(cfg: Config) -> str:
+    """The licence mode and the sources behind the data, for every printed report."""
+    used, _ = data.sources_used(cfg)
+    return licences.statement(cfg.licence_mode, used)

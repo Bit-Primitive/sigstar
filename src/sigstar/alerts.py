@@ -11,6 +11,13 @@ A rule names assets and a list of conditions joined by `all` (every one must hol
 `lookback_days` before the evaluated day (the day itself excluded). A condition on a
 missing value does not hold, and the evidence says the value was missing.
 
+On-chain totals move with how much of each chain the chainstar warehouse holds, so for an
+on-chain feature the history is only the earlier days that are comparable by the rule the
+on-chain z-scores use (dbt: int_onchain_feature_z): every chain behind the evaluated day's
+value was loaded on that day too, with a block count within `onchain_coverage_tolerance`,
+and the value is summed over those same chains. With fewer than 20 such days the condition
+is not evaluated (it never holds); the skip is recorded with its reason.
+
 Fired alerts go to the console, are appended to a JSONL log with a CSV twin (once per rule,
 asset and day), and are POSTed to SIGSTAR_ALERT_WEBHOOK_URL when that is set. Each carries
 its evidence and the not-financial-advice notice.
@@ -157,13 +164,92 @@ def _parse_rule(raw: dict[str, Any], path: Path) -> Rule:
     )
 
 
+# features_daily value columns that are on-chain quantities, and how a day's value combines
+# its chains' parts in int_onchain_feature_parts (sum, or one shared value).
+ONCHAIN_PARTS = {
+    "onchain_tx_count": "sum",
+    "onchain_active_wallets": "sum",
+    "onchain_fees_native": "sum",
+    "stablecoin_transfer_amount": "sum",
+    "onchain_dex_volume_usd": "sum",
+    "onchain_swap_count": "sum",
+    "onchain_price_gap_bps": "max",
+    "range_pct": "max",  # only on days whose reference price is on-chain
+}
+# On-chain columns that measure the sample itself: no percentile of them is meaningful
+# across days of different coverage, so pNN thresholds on them are never evaluated.
+ONCHAIN_SAMPLE_SIZE = (
+    "onchain_price_observations",
+    "onchain_price_gap_hours",
+    "onchain_coverage_seconds",
+    "onchain_dex_coverage_seconds",
+)
+MIN_HISTORY = 20
+
+
+@dataclass
+class Skip:
+    """A condition that was not evaluated because on-chain coverage was not comparable."""
+
+    rule: str
+    asset: str
+    day: str
+    feature: str
+    reason: str
+
+
+@dataclass
+class Coverage:
+    """Each on-chain feature's parts per chain and day (dbt: int_onchain_feature_parts:
+    asset, day, feature, chain, value, blocks) and the tolerance on block counts."""
+
+    parts: pd.DataFrame
+    tolerance: float = 0.1
+
+    def history(
+        self, asset: str, feature: str, day: date, past_days: list[date]
+    ) -> tuple[pd.Series, str | None] | None:
+        """The feature's values on the comparable days among `past_days`, and why they
+        are too few (None when enough). None when the feature has no on-chain parts that
+        day (an exchange-priced day's range, say), so the plain history applies."""
+        parts = self.parts[(self.parts["asset"] == asset) & (self.parts["feature"] == feature)]
+        today = parts[parts["day"] == day]
+        if today.empty:
+            return None
+        blocks = dict(zip(today["chain"], today["blocks"], strict=True))
+        earlier = parts[parts["day"].isin(past_days) & parts["chain"].isin(blocks)]
+        ratio = earlier["blocks"] / earlier["chain"].map(blocks)
+        ok = earlier[(ratio <= 1 + self.tolerance) & (1 / ratio <= 1 + self.tolerance)]
+        per_day = ok.groupby("day")
+        combine = ONCHAIN_PARTS[feature]
+        values = per_day["value"].sum() if combine == "sum" else per_day["value"].max()
+        values = values[per_day["chain"].nunique() == len(blocks)]
+        with_data = parts[parts["day"].isin(past_days)]["day"].nunique()
+        if len(values) >= MIN_HISTORY or with_data < MIN_HISTORY:
+            return values, None
+        short = [
+            f"{chain} loaded with similar coverage (blocks within "
+            f"{self.tolerance * 100:.0f}%) on {ok[ok['chain'] == chain]['day'].nunique()} "
+            f"of {with_data} earlier days"
+            for chain in sorted(blocks)
+            if ok[ok["chain"] == chain]["day"].nunique() < MIN_HISTORY
+        ]
+        detail = "; ".join(short) or (
+            f"the same chains were loaded with similar coverage on only {len(values)} of "
+            f"{with_data} earlier days"
+        )
+        return values, f"not comparable: {detail} ({MIN_HISTORY} needed)"
+
+
 def _threshold(condition: Condition, history: pd.Series) -> tuple[float | None, str]:
     if isinstance(condition.threshold, (int, float)):
         return float(condition.threshold), str(condition.threshold)
     q = float(_PERCENTILE.match(condition.threshold).group(1))  # type: ignore[union-attr]
     values = history.dropna()
-    if len(values) < 20:
-        return None, f"{condition.threshold} (needs 20 days of history, has {len(values)})"
+    if len(values) < MIN_HISTORY:
+        return None, (
+            f"{condition.threshold} (needs {MIN_HISTORY} days of history, has {len(values)})"
+        )
     value = float(values.quantile(q / 100))
     return value, f"{condition.threshold} = {value:.6g}"
 
@@ -177,10 +263,17 @@ def _holds(op: str, value: float, threshold: float) -> bool:
 
 
 def evaluate(
-    rules: list[Rule], df: pd.DataFrame, lookback_days: int, day: date | None = None
+    rules: list[Rule],
+    df: pd.DataFrame,
+    lookback_days: int,
+    day: date | None = None,
+    coverage: Coverage | None = None,
+    skipped: list[Skip] | None = None,
 ) -> list[Alert]:
     """Evaluate every rule for each of its assets on `day` (default: each asset's latest
-    day with a closed daily candle)."""
+    day with a closed daily candle). Percentile thresholds on on-chain features use only
+    days of comparable coverage (`coverage`); conditions that could not be evaluated for
+    that reason are appended to `skipped`."""
     alerts = []
     now = datetime.now(UTC).isoformat(timespec="seconds")
     for rule in rules:
@@ -206,7 +299,18 @@ def evaluate(
             for c in rule.conditions:
                 raw_value = current[c.feature].iloc[0]
                 value = None if pd.isna(raw_value) else float(raw_value)
-                threshold, described = _threshold(c, past[c.feature])
+                onchain_day = (
+                    current["ref_venue"].iloc[0] == "onchain" if "ref_venue" in current else False
+                )
+                history, reason = _history(c, asset, eval_day, past, value, coverage, onchain_day)
+                if reason is not None:
+                    threshold, described = None, f"{c.threshold} (not evaluated: {reason})"
+                    if skipped is not None:
+                        skipped.append(
+                            Skip(rule.name, asset, eval_day.isoformat(), c.feature, reason)
+                        )
+                else:
+                    threshold, described = _threshold(c, history)
                 held = (
                     value is not None
                     and threshold is not None
@@ -228,6 +332,55 @@ def evaluate(
                     Alert(rule.name, rule.description, asset, eval_day.isoformat(), evidence, now)
                 )
     return alerts
+
+
+def _history(
+    c: Condition,
+    asset: str,
+    day: date,
+    past: pd.DataFrame,
+    value: float | None,
+    coverage: Coverage | None,
+    onchain_day: bool = False,
+) -> tuple[pd.Series, str | None]:
+    """The history a condition's percentile is taken from, or why there is none."""
+    plain = past[c.feature]
+    if isinstance(c.threshold, (int, float)) or value is None:
+        return plain, None
+    if c.feature in ONCHAIN_SAMPLE_SIZE:
+        return plain, "it measures how much on-chain data was loaded, so days do not compare"
+    if c.feature not in ONCHAIN_PARTS:
+        return plain, None
+    if c.feature == "range_pct" and "ref_venue" in past:
+        # Exchange ranges against exchange ranges; on-chain days are handled below.
+        plain = past.loc[past["ref_venue"] != "onchain", c.feature]
+    if coverage is None:
+        if c.feature == "range_pct" and not onchain_day:
+            return plain, None
+        return plain, "on-chain coverage is not available to compare days"
+    found = coverage.history(asset, c.feature, day, list(past["day"]))
+    if found is None:
+        return plain, None
+    return found
+
+
+def record_skips(skips: list[Skip], log_file: Path) -> list[Skip]:
+    """Append skipped conditions not logged before (by rule, asset, day, feature) to
+    `<log>-skipped.jsonl`, next to the alert log. Returns the new ones."""
+    path = log_file.with_name(f"{log_file.stem}-skipped.jsonl")
+    seen: set[tuple[str, str, str, str]] = set()
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if line.strip():
+                item = json.loads(line)
+                seen.add((item["rule"], item["asset"], item["day"], item["feature"]))
+    new = [s for s in skips if (s.rule, s.asset, s.day, s.feature) not in seen]
+    if new:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as fh:
+            for skip in new:
+                fh.write(json.dumps(asdict(skip)) + "\n")
+    return new
 
 
 def record(alerts: list[Alert], log_file: Path) -> list[Alert]:

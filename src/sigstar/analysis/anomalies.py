@@ -51,15 +51,24 @@ def find(df: pd.DataFrame, threshold: float, start: date, end: date) -> list[Ano
     for asset, rows in df.groupby("asset"):
         rows = rows.sort_values("day").reset_index(drop=True)
         in_window = (rows["day"] >= start) & (rows["day"] <= end)
+        onchain_ref = rows["ref_venue"] == "onchain" if "ref_venue" in rows else False
         for feature in features_for(list(df.columns), str(asset)):
             value_col = feature.value_column
             if value_col is None or value_col not in rows:
                 continue
-            rz = robust_z(rows[value_col].astype(float))
+            values = rows[value_col].astype(float)
+            if feature.z_column == "range_z" and isinstance(onchain_ref, pd.Series):
+                # Exchange ranges against exchange ranges; on-chain ranges use the dbt z only.
+                values = values.where(~onchain_ref)
+            rz = robust_z(values)
             for i in rows.index[in_window]:
                 z = rows.at[i, feature.z_column]
                 z = None if pd.isna(z) else float(z)
                 r = None if pd.isna(rz.iloc[i]) or math.isinf(rz.iloc[i]) else float(rz.iloc[i])
+                if feature.coverage_gated:
+                    # The dbt z-score compares comparable chain coverage only; a robust z
+                    # over every past day would not, so it is not used for these.
+                    r = None
                 if max(abs(z or 0.0), abs(r or 0.0)) >= threshold:
                     out.append(
                         Anomaly(
@@ -73,3 +82,27 @@ def find(df: pd.DataFrame, threshold: float, start: date, end: date) -> list[Ano
                         )
                     )
     return sorted(out, key=lambda a: (a.day, a.size), reverse=True)
+
+
+@dataclass
+class NotCompared:
+    day: date
+    assets: list[str]
+    label: str
+    note: str
+
+
+def not_comparable(df: pd.DataFrame, start: date, end: date) -> list[NotCompared]:
+    """On-chain features with no z-score in the window because coverage was not
+    comparable, one entry per day, feature and reason (market-wide ones list every asset)."""
+    found: dict[tuple, NotCompared] = {}
+    rows = df[(df["day"] >= start) & (df["day"] <= end)]
+    for feature in features_for(list(df.columns), ""):
+        column = f"{feature.z_column}_note"
+        if column not in rows:
+            continue
+        for _, r in rows[rows[column].notna()].iterrows():
+            key = (r["day"], feature.label, r[column])
+            entry = found.setdefault(key, NotCompared(r["day"], [], feature.label, r[column]))
+            entry.assets.append(str(r["asset"]))
+    return sorted(found.values(), key=lambda n: (n.day, n.label), reverse=True)

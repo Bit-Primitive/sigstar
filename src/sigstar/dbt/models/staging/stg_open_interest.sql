@@ -12,4 +12,4 @@ select
     oi_base,
     oi_usd
 from raw
-where oi_usd >= 0
+where oi_usd >= 0 {{ licence_exclude('venue', 'derivatives') }}

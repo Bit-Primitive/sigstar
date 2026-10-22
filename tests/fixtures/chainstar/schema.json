@@ -1,0 +1,53 @@
+{
+ "fct_token_prices": {
+  "price_id": "VARCHAR",
+  "chain": "VARCHAR",
+  "token_address": "VARCHAR",
+  "token_id": "VARCHAR",
+  "granularity": "VARCHAR",
+  "bucket_start": "TIMESTAMP",
+  "date_day": "DATE",
+  "bucket_start_unix": "BIGINT",
+  "usd_price": "DOUBLE",
+  "observed_price": "DOUBLE",
+  "price_low": "DOUBLE",
+  "price_high": "DOUBLE",
+  "price_method": "VARCHAR",
+  "confidence": "VARCHAR",
+  "observations": "BIGINT",
+  "rejected_observations": "BIGINT",
+  "volume_usd": "DOUBLE",
+  "sources": "BIGINT",
+  "last_block_number": "BIGINT"
+ },
+ "fct_swaps": {
+  "swap_id": "VARCHAR",
+  "chain": "VARCHAR",
+  "block_number": "BIGINT",
+  "block_timestamp": "TIMESTAMP",
+  "date_day": "DATE",
+  "venue": "VARCHAR",
+  "pool_verified": "BOOLEAN",
+  "token_in_address": "VARCHAR",
+  "token_out_address": "VARCHAR",
+  "usd_value": "DOUBLE",
+  "price_confidence": "VARCHAR"
+ },
+ "fct_fees": {
+  "chain": "VARCHAR",
+  "block_number": "BIGINT",
+  "block_timestamp": "TIMESTAMP",
+  "date_day": "DATE",
+  "from_address": "VARCHAR",
+  "fee_native": "DOUBLE"
+ },
+ "fct_transfers": {
+  "chain": "VARCHAR",
+  "block_number": "BIGINT",
+  "block_timestamp": "TIMESTAMP",
+  "date_day": "DATE",
+  "token_address": "VARCHAR",
+  "from_address": "VARCHAR",
+  "amount": "DOUBLE"
+ }
+}

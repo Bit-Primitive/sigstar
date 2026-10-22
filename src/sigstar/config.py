@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from sigstar import licences
 from sigstar.errors import SigstarError
 
 CONFIG_FILENAME = "sigstar.yml"
@@ -37,6 +38,10 @@ history:
 # Assets to follow. Each venue key is that venue's own market name; leave one out to skip
 # that venue for the asset. news_keywords are whole-word, case-insensitive matches against
 # headlines and feed snippets. chains are chainstar chains whose activity counts for it.
+# onchain (used when a chainstar warehouse is set): `prices` are chainstar's USD prices
+# derived from DEX swaps, by chain and token address (`native` is how chainstar keys ETH,
+# SOL and BTC; WETH and wrapped SOL are priced as native), and `dex_tokens` are the tokens
+# whose swaps count as the asset's DEX volume. Always addresses, never symbols.
 assets:
   BTC:
     name: Bitcoin
@@ -48,6 +53,14 @@ assets:
     gdelt_query: bitcoin
     news_keywords: [bitcoin, btc]
     chains: [bitcoin]
+    onchain:
+      # chainstar prices Bitcoin from wrapped BTC on Ethereum and Base
+      # (cross_chain_wrapped_btc), so they must be in the same chainstar warehouse.
+      prices: [{chain: bitcoin, token: native}]
+      dex_tokens:
+        - {chain: ethereum, token: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"}  # WBTC
+        - {chain: ethereum, token: "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf"}  # cbBTC
+        - {chain: base, token: "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf"}      # cbBTC
   ETH:
     name: Ethereum
     coinbase: ETH-USD
@@ -58,6 +71,11 @@ assets:
     gdelt_query: ethereum
     news_keywords: [ethereum, ether, eth]
     chains: [ethereum, base]
+    onchain:
+      prices: [{chain: ethereum, token: native}, {chain: base, token: native}]
+      dex_tokens:
+        - {chain: ethereum, token: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"}  # WETH
+        - {chain: base, token: "0x4200000000000000000000000000000000000006"}      # WETH
   SOL:
     name: Solana
     coinbase: SOL-USD
@@ -68,6 +86,9 @@ assets:
     gdelt_query: solana
     news_keywords: [solana]
     chains: [solana]
+    onchain:
+      prices: [{chain: solana, token: native}]
+      dex_tokens: [{chain: solana, token: native}]   # SOL and wrapped SOL, as chainstar counts them
 
 # News topics that are not a single asset. Same keyword rules as above.
 topics:
@@ -80,6 +101,12 @@ topics:
 
 # Sources. Set enabled: false to skip one. See SOURCES.md for each one's terms.
 sources:
+  # personal: every enabled source, for your own use (exchange data is licensed for that).
+  # commercial: only sources whose terms allow commercial use (Fear & Greed, GDELT, FRED's
+  # public-domain series) plus chainstar's on-chain data and prices; Coinbase, Kraken,
+  # Binance, OKX and the RSS feeds are switched off whatever `enabled` says. Prices then
+  # come from chainstar only, so set chainstar: warehouse: below. Not legal advice.
+  licence_mode: personal
   coinbase: {enabled: true}
   kraken: {enabled: true}
   binance: {enabled: true}          # spot klines from data-api.binance.vision
@@ -124,6 +151,10 @@ analysis:
   zscore_window_days: 30     # trailing window for z-scores (today is never in its own window)
   anomaly_z: 3.0             # |z| at or above this is an anomaly
   driver_z: 2.0              # |z| at or above this counts as unusual in explanations
+  # On-chain z-scores compare a day only with earlier days on which every chain behind the
+  # number was loaded with a block count within this share of the day's own (0.1 = 10%);
+  # otherwise the z-score is left empty and explanations say why.
+  onchain_coverage_tolerance: 0.1
   forecast_horizon_days: 7
   backtest_origins: 20       # rolling origins for forecast error
 
@@ -156,6 +187,14 @@ class Asset:
     gdelt_query: str | None
     news_keywords: tuple[str, ...]
     chains: tuple[str, ...]
+    onchain_prices: tuple[OnchainToken, ...] = ()
+    dex_tokens: tuple[OnchainToken, ...] = ()
+
+
+@dataclass(frozen=True)
+class OnchainToken:
+    chain: str
+    token: str  # contract address (EVM, lowercased), mint (Solana) or `native`
 
 
 @dataclass(frozen=True)
@@ -197,8 +236,28 @@ class Config:
         """dlt state, dbt artefacts and the HTTP cache live here, next to the config."""
         return self.base_dir / ".sigstar"
 
+    @property
+    def licence_mode(self) -> str:
+        return str(self.sources.get("licence_mode") or licences.PERSONAL)
+
+    def source_configured(self, name: str) -> bool:
+        """Switched on in sigstar.yml, whatever the licence mode says."""
+        spec = self.sources.get(name, {})
+        return isinstance(spec, dict) and bool(spec.get("enabled", False))
+
     def source_enabled(self, name: str) -> bool:
-        return bool(self.sources.get(name, {}).get("enabled", False))
+        """Switched on and allowed by the licence mode."""
+        return self.source_configured(name) and licences.allows(self.licence_mode, name)
+
+    def licence_blocked(self, name: str) -> bool:
+        """Switched on in sigstar.yml but off because of the licence mode."""
+        return self.source_configured(name) and not licences.allows(self.licence_mode, name)
+
+    def fred_series(self) -> list[str]:
+        series = [str(s) for s in self.sources.get("fred", {}).get("series") or []]
+        if self.licence_mode == licences.COMMERCIAL:
+            series = [s for s in series if s.upper() in licences.FRED_PUBLIC_DOMAIN]
+        return series
 
     def resolve(self, value: str | os.PathLike[str]) -> Path:
         path = Path(value).expanduser()
@@ -233,6 +292,26 @@ def _keywords(value: Any, where: str) -> tuple[str, ...]:
     return tuple(v.strip().lower() for v in value)
 
 
+def _onchain_tokens(value: Any, where: str) -> tuple[OnchainToken, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(
+        isinstance(v, dict) and v.get("chain") and v.get("token") for v in value
+    ):
+        raise SigstarError(
+            f"{where} must be a list of {{chain, token}} entries",
+            'for example: [{chain: base, token: "0x4200000000000000000000000000000000000006"}]',
+        )
+    tokens = []
+    for v in value:
+        token = str(v["token"])
+        # EVM addresses are hex and case-insensitive; Solana mints are case-sensitive.
+        tokens.append(
+            OnchainToken(str(v["chain"]), token.lower() if token.startswith("0x") else token)
+        )
+    return tuple(tokens)
+
+
 def _parse_assets(raw: Any) -> dict[str, Asset]:
     if not isinstance(raw, dict) or not raw:
         raise SigstarError(
@@ -250,6 +329,12 @@ def _parse_assets(raw: Any) -> dict[str, Asset]:
             gdelt_query=spec.get("gdelt_query"),
             news_keywords=_keywords(spec.get("news_keywords"), f"assets.{sym}"),
             chains=tuple(spec.get("chains") or ()),
+            onchain_prices=_onchain_tokens(
+                (spec.get("onchain") or {}).get("prices"), f"assets.{sym}.onchain.prices"
+            ),
+            dex_tokens=_onchain_tokens(
+                (spec.get("onchain") or {}).get("dex_tokens"), f"assets.{sym}.onchain.dex_tokens"
+            ),
         )
     return assets
 
@@ -282,6 +367,12 @@ def load_config(path: Path | None = None) -> Config:
         )
         for key, spec in (raw.get("topics") or {}).items()
     }
+    mode = (raw.get("sources") or {}).get("licence_mode") or licences.PERSONAL
+    if mode not in licences.MODES:
+        raise SigstarError(
+            f"sources.licence_mode is {mode!r}",
+            f"use one of: {', '.join(licences.MODES)} (see SOURCES.md)",
+        )
     cfg = Config(
         path=path if path.exists() else None,
         base_dir=base_dir,

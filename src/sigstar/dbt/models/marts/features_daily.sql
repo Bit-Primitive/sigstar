@@ -1,11 +1,19 @@
 -- Grain: one row per asset and UTC day, on a gap-free date spine, so every trailing window
 -- counts calendar days. Every *_z column is a z-score against the previous
--- var('zscore_window') days (the day itself excluded); see macros/zscore.sql.
+-- var('zscore_window') days (the day itself excluded); see macros/zscore.sql. On-chain
+-- z-scores (and range_z on days priced on-chain) use only earlier days with comparable
+-- chain coverage, and say why in <column>_note when there were too few
+-- (intermediate/int_onchain_feature_z.sql).
 -- Market-wide columns (topics, fear & greed, macro, stablecoins) repeat on every asset row.
+-- The on-chain price (venue onchain in fct_prices) is the reference only when no exchange
+-- has the day (always, in commercial mode); spread and volume_quote use exchanges only.
 {% set assets = var('assets') %}
 {% set topics = var('topics') %}
 {% set fred_series = var('fred_series') %}
 {% set priority = var('venue_priority') %}
+{% set onchain_z_columns = [
+    'onchain_tx_count_z', 'onchain_active_wallets_z', 'stablecoin_transfer_z',
+    'onchain_dex_volume_z', 'onchain_swap_count_z', 'onchain_price_gap_z', 'range_z'] %}
 
 with asset_list as (
     {% if assets %}
@@ -92,6 +100,53 @@ venues as (
             / avg(close) filter (where quote = '{{ var("spread_quote") }}') * 10000
         end as spread_bps
     from daily_prices
+    -- A day's median DEX price is not a closing price, and a chainstar slice's volume is a
+    -- sample: neither belongs in the exchanges' spread or volume.
+    where venue <> 'onchain'
+    group by all
+),
+
+onchain_price as (
+    -- chainstar's price for the day: the median of the day's swaps on one chain, with the
+    -- chain, method, confidence and observation count it carries.
+    select
+        asset,
+        day,
+        close as onchain_price,
+        price_chain as onchain_price_chain,
+        price_method as onchain_price_method,
+        price_confidence as onchain_price_confidence,
+        price_observations as onchain_price_observations
+    from daily_prices
+    where venue = 'onchain'
+),
+
+onchain_gap as (
+    select * from {{ ref('int_onchain_price_gap') }}
+),
+
+onchain_z as (
+    -- On-chain z-scores against days of comparable chain coverage only, and why a z-score
+    -- is missing when coverage made the comparison invalid (int_onchain_feature_z).
+    select
+        asset,
+        day,
+        {% for z in onchain_z_columns %}
+        max(z) filter (where z_column = '{{ z }}') as {{ z }},
+        max(note) filter (where z_column = '{{ z }}') as {{ z }}_note{{ "," if not loop.last }}
+        {% endfor %}
+    from {{ ref('int_onchain_feature_z') }}
+    group by all
+),
+
+onchain_dex as (
+    select
+        asset,
+        day,
+        sum(volume_usd) as onchain_dex_volume_usd,
+        sum(swap_count) as onchain_swap_count,
+        min(coverage_seconds) as onchain_dex_coverage_seconds
+    from {{ ref('fct_onchain_dex_daily') }}
     group by all
 ),
 
@@ -188,7 +243,17 @@ joined as (
         oa.onchain_active_wallets,
         oa.onchain_fees_native,
         oa.onchain_coverage_seconds,
-        om.stablecoin_transfer_amount
+        om.stablecoin_transfer_amount,
+        op.onchain_price,
+        op.onchain_price_chain,
+        op.onchain_price_method,
+        op.onchain_price_confidence,
+        op.onchain_price_observations,
+        og.onchain_price_gap_bps,
+        og.onchain_price_gap_hours,
+        od.onchain_dex_volume_usd,
+        od.onchain_swap_count,
+        od.onchain_dex_coverage_seconds
     from spine as s
     left join reference as r on r.asset = s.asset and r.day = s.day
     left join intraday as i on i.asset = s.asset and i.day = s.day
@@ -205,10 +270,24 @@ joined as (
     {% endfor %}
     left join onchain_asset as oa on oa.asset = s.asset and oa.day = s.day
     left join onchain_market as om on om.day = s.day
+    left join onchain_price as op on op.asset = s.asset and op.day = s.day
+    left join onchain_gap as og on og.asset = s.asset and og.day = s.day
+    left join onchain_dex as od on od.asset = s.asset and od.day = s.day
+),
+
+scored as (
+    select
+        j.*,
+        {% for z in onchain_z_columns %}
+        oz.{{ z }} as {{ z }}_onchain,
+        oz.{{ z }}_note{{ "," if not loop.last }}
+        {% endfor %}
+    from joined as j
+    left join onchain_z as oz on oz.asset = j.asset and oz.day = j.day
 )
 
 select
-    *,
+    * exclude ({% for z in onchain_z_columns %}{{ z }}_onchain{{ ", " if not loop.last }}{% endfor %}),
     stddev_samp(ret_1d) over (
         partition by asset order by day rows between 6 preceding and current row
     ) * sqrt(365) as rv_7d,
@@ -216,7 +295,11 @@ select
         partition by asset order by day rows between 29 preceding and current row
     ) * sqrt(365) as rv_30d,
     {{ zscore('ret_1d', 'asset', 'day') }} as ret_1d_z,
-    {{ zscore('range_pct', 'asset', 'day') }} as range_z,
+    -- Exchange days against exchange days only; a day whose reference price is on-chain
+    -- (a range of swap prices, which widens with the sample) against comparable on-chain days.
+    case when ref_venue = 'onchain' then range_z_onchain
+        else {{ zscore("case when ref_venue <> 'onchain' then range_pct end", 'asset', 'day') }}
+    end as range_z,
     {{ zscore('rv_intraday', 'asset', 'day') }} as rv_intraday_z,
     {{ zscore('ln(nullif(volume_quote, 0))', 'asset', 'day') }} as volume_z,
     {{ zscore('spread_bps', 'asset', 'day') }} as spread_z,
@@ -229,7 +312,10 @@ select
     {{ zscore('news_' ~ t ~ '_tone', 'asset', 'day') }} as news_{{ t }}_tone_z,
     {% endfor %}
     {{ zscore('fear_greed_change', 'asset', 'day') }} as fear_greed_change_z,
-    {{ zscore('onchain_tx_count', 'asset', 'day') }} as onchain_tx_count_z,
-    {{ zscore('onchain_active_wallets', 'asset', 'day') }} as onchain_active_wallets_z,
-    {{ zscore('stablecoin_transfer_amount', 'asset', 'day') }} as stablecoin_transfer_z
-from joined
+    onchain_tx_count_z_onchain as onchain_tx_count_z,
+    onchain_active_wallets_z_onchain as onchain_active_wallets_z,
+    stablecoin_transfer_z_onchain as stablecoin_transfer_z,
+    onchain_dex_volume_z_onchain as onchain_dex_volume_z,
+    onchain_swap_count_z_onchain as onchain_swap_count_z,
+    onchain_price_gap_z_onchain as onchain_price_gap_z
+from scored

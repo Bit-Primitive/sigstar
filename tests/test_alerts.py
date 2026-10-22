@@ -120,3 +120,24 @@ def test_evaluate_on_a_given_day(features: pd.DataFrame) -> None:
     )
     (fired,) = alerts.evaluate([rule], features, 90, day=date(2026, 8, 1))
     assert fired.day == "2026-08-01"
+
+
+def test_percentiles_of_onchain_sample_size_are_never_evaluated(features: pd.DataFrame) -> None:
+    features["onchain_coverage_seconds"] = range(len(features))
+    rule = alerts.Rule(
+        "big_sample",
+        "",
+        ["BTC"],
+        "all",
+        [alerts.Condition("onchain_coverage_seconds", "above", "p5")],
+    )
+    skipped: list[alerts.Skip] = []
+    assert alerts.evaluate([rule], features, 90, skipped=skipped) == []
+    (skip,) = skipped
+    assert skip.feature == "onchain_coverage_seconds"
+    assert "how much on-chain data was loaded" in skip.reason
+    # A plain number is the user's own threshold and is still checked.
+    numeric = alerts.Rule(
+        "n", "", ["BTC"], "all", [alerts.Condition("onchain_coverage_seconds", "above", 0)]
+    )
+    assert alerts.evaluate([numeric], features, 90)

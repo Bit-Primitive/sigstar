@@ -114,7 +114,10 @@ def collect(
     if not streams:
         raise SigstarError(
             "nothing to collect: no enabled source matches",
-            "check sources: in sigstar.yml and the --source names (see `sigstar collect --help`)",
+            "; ".join(notices)
+            if notices
+            else "check sources: in sigstar.yml and the --source names "
+            "(see `sigstar collect --help`)",
         )
     client = client or make_client(cfg)
     pipe = pipeline(cfg)
