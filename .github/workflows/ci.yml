@@ -12,8 +12,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --python 3.13
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -24,8 +24,8 @@ jobs:
       matrix:
         python: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --python ${{ matrix.python }}
       # Tests use recorded fixtures and make no network requests. The chainstar on-chain
       # test is skipped when its real warehouse file is not present (as here).
