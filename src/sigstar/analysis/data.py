@@ -139,7 +139,8 @@ def onchain_parts(cfg: Config) -> pd.DataFrame:
 
 def headlines(cfg: Config, tag: str, day: date, limit: int = 5) -> pd.DataFrame:
     """Headlines tagged with an asset or topic on one UTC day, feed items first (they carry
-    a publisher snippet), then GDELT's list in its relevance order."""
+    a publisher snippet), then GDELT's list in its relevance order. A story syndicated
+    under the same title (the same article on aol.com and fool.com) is listed once."""
     with connect(cfg) as con:
         news = _qualified(con, "fct_news")
         bridge = _qualified(con, "bridge_news_tags")
@@ -150,6 +151,10 @@ def headlines(cfg: Config, tag: str, day: date, limit: int = 5) -> pd.DataFrame:
             from {news} as n
             join {bridge} as b using (article_id)
             where b.tag = ? and n.day = ?
+            qualify row_number() over (
+                partition by lower(n.title)
+                order by case when n.provider = 'rss' then 0 else 1 end, n.published_at
+            ) = 1
             order by case when n.provider = 'rss' then 0 else 1 end, n.published_at
             limit ?
             """,

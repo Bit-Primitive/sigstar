@@ -14,6 +14,22 @@ from sigstar.config import Config, webhook_url
 from sigstar.errors import SigstarError
 
 
+def day_ranges(days: object) -> str:
+    """ "92 days (2026-07-23 to 2026-10-22)", with runs of consecutive days joined, so a
+    warehouse sampled every day reads as one range rather than a list of every date."""
+    ordered = sorted(set(pd.to_datetime(list(days)).date))  # type: ignore[call-overload]
+    if not ordered:
+        return "no days"
+    runs: list[tuple[date, date]] = []
+    for d in ordered:
+        if runs and d - runs[-1][1] == timedelta(days=1):
+            runs[-1] = (runs[-1][0], d)
+        else:
+            runs.append((d, d))
+    parts = ", ".join(str(a) if a == b else f"{a} to {b}" for a, b in runs)
+    return f"{len(ordered)} day{'s' if len(ordered) != 1 else ''} ({parts})"
+
+
 def headline_lookup(cfg: Config) -> explain.HeadlineLookup:
     def lookup(tag: str, day: date) -> list[dict]:
         rows = data.headlines(cfg, tag, day)
@@ -116,10 +132,9 @@ def build_brief(cfg: Config, window_days: int = 90, top_moves: int = 3) -> repor
     if cfg.chainstar_warehouse is not None:
         onchain = data.read_table(cfg, "fct_onchain_daily")
         onchain["day"] = pd.to_datetime(onchain["day"]).dt.date
-        days = ", ".join(sorted(map(str, onchain["day"].unique())))
         notes.append(
             f"On-chain data: chainstar warehouse {cfg.chainstar_warehouse}, "
-            f"{onchain['day'].nunique()} day(s) ({days})."
+            f"{day_ranges(onchain['day'].unique())}."
         )
     used, feeds = data.sources_used(cfg)
     attributions = {f["name"]: f.get("attribution", f["name"]) for f in configured_feeds(cfg)}

@@ -172,6 +172,19 @@ def test_news_tagging_is_whole_word_and_traceable(warehouse: Path) -> None:
     assert bad == 0
 
 
+def test_gdelt_titles_are_untokenised(warehouse: Path) -> None:
+    # GDELT spaces out punctuation ("BTC ? Bitcoin Is Down Nearly 4 % ..."); the staging
+    # model puts it back, and feed titles are kept exactly as published.
+    titles = [
+        t for (t,) in q(warehouse, "select title from sigstar.fct_news where provider = 'gdelt'")
+    ]
+    assert titles
+    for t in titles:
+        assert not re.search(r" [,.!?:;%]", t), t
+        assert t == t.strip()
+    assert any("Down Nearly 4% So Far" in t for t in titles)
+
+
 def test_keyword_pattern_escapes_and_bounds() -> None:
     assert keyword_pattern("btc") == r"\bbtc\b"
     assert keyword_pattern("s&p 500") == r"\bs&p 500\b"

@@ -209,6 +209,14 @@ def onchain_price_source(row: pd.Series) -> str | None:
     )
 
 
+def _span(seconds: float) -> str:
+    """How much of a day a chainstar slice covers, in words. One block (or blocks sharing a
+    timestamp) spans no time at all, which "0 seconds" would misread."""
+    if seconds < 1:
+        return "come from a single moment (one block)"
+    return f"span only {seconds:.0f} seconds"
+
+
 def coverage_notes(row: pd.Series) -> list[str]:
     """Say which angles had no data that day, so a short driver list is not misread."""
     notes = []
@@ -223,13 +231,13 @@ def coverage_notes(row: pd.Series) -> list[str]:
     coverage = _finite(row.get("onchain_coverage_seconds"))
     if coverage is not None and coverage < 86000:
         notes.append(
-            f"on-chain numbers span only {coverage:.0f} seconds of this day "
+            f"on-chain numbers {_span(coverage)} of this day "
             "(chainstar slice), so they are a sample, not the day's total"
         )
     dex_coverage = _finite(row.get("onchain_dex_coverage_seconds"))
     if dex_coverage is not None and dex_coverage < 86000:
         notes.append(
-            f"DEX swaps span only {dex_coverage:.0f} seconds of this day on at least one "
+            f"DEX swaps {_span(dex_coverage)} of this day on at least one "
             "chain (chainstar slice): DEX volume and swap counts are a sample"
         )
     if row.get("ref_venue") == "onchain":
